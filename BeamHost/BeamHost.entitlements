@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- App Sandbox (required for Mac App Store) -->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+
+	<!-- Network -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<key>com.apple.security.network.server</key>
+	<true/>
+
+	<!-- Screen Capture (ScreenCaptureKit) -->
+	<!-- Note: On macOS 14+, Screen Recording permission is managed via TCC.
+	     The app just needs to request it via ScreenCaptureKit API.
+	     No special entitlement needed beyond app-sandbox. -->
+
+	<!-- For development: disable sandbox to enable SCK during testing -->
+	<!-- Remove this in production / App Store builds -->
+	<!-- <key>com.apple.security.temporary-exception.mach-lookup.global-name</key> -->
+</dict>
+</plist>

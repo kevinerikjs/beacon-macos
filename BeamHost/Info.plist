@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Bundle Identity -->
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleName</key>
+	<string>Beam</string>
+	<key>CFBundleDisplayName</key>
+	<string>Beam</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+
+	<!-- Menu bar only - no Dock icon, no main window -->
+	<key>LSUIElement</key>
+	<true/>
+
+	<!-- Minimum macOS version -->
+	<key>LSMinimumSystemVersion</key>
+	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
+
+	<!-- Permission usage descriptions -->
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>Beam needs Screen Recording permission to stream your Mac's display to your iPhone.</string>
+
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Beam uses your local network to stream your screen to paired iPhone devices.</string>
+
+	<!-- Bonjour services used -->
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_beam._tcp</string>
+	</array>
+
+	<!-- Human Interface -->
+	<key>NSSupportsAutomaticTermination</key>
+	<false/>
+	<key>NSSupportsSuddenTermination</key>
+	<false/>
+</dict>
+</plist>
