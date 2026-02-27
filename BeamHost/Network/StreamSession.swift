@@ -173,7 +173,13 @@ final class StreamSession {
 
     func sendPairingResponse(_ message: BeamPairingMessage) {
         guard let data = try? JSONEncoder().encode(message) else { return }
-        sendTCP(data.lengthPrefixed())
+        // iOS receiveNextPacket() expects every inbound packet to start with a
+        // BeamPacketHeader. Wrap auth/pairing responses in a .control header so
+        // the magic-byte check passes and the payload is dispatched correctly.
+        let header = BeamPacketHeader(type: .control, flags: 0, payloadLength: UInt32(data.count))
+        var packet = header.serialized()
+        packet.append(data)
+        sendTCP(packet.lengthPrefixed())
     }
 
     // MARK: - Control Messages
