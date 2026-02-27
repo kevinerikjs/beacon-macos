@@ -111,6 +111,10 @@ final class StreamSession {
             handleAuthRequest(message)
         case .hello:
             handleHello(message)
+        case .codeVerify:
+            if let code = message.code {
+                PairingManager.shared.verifyCode(code)
+            }
         default:
             logger.warning("Unexpected pairing message type: \(message.type.rawValue)")
         }
