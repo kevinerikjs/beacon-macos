@@ -243,9 +243,10 @@ final class VideoEncoder {
         while offset < totalLength {
             guard offset + 4 <= totalLength else { break }
 
-            // Read AVCC NAL length (4-byte big-endian)
+            // Read AVCC NAL length (4-byte big-endian) — use loadUnaligned since
+            // offset may not be 4-byte aligned after variable-length NAL units.
             let nalLengthBytes = UnsafeRawPointer(pointer.advanced(by: offset))
-            let nalLength = Int(nalLengthBytes.load(as: UInt32.self).bigEndian)
+            let nalLength = Int(nalLengthBytes.loadUnaligned(as: UInt32.self).bigEndian)
             offset += 4
 
             guard offset + nalLength <= totalLength else { break }

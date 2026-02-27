@@ -78,7 +78,7 @@ final class StreamSession {
             if let error { logger.error("Receive error: \(error)"); return }
             guard let data, data.count == 4 else { return }
 
-            let length = data.withUnsafeBytes { $0.load(as: UInt32.self).bigEndian }
+            let length = data.withUnsafeBytes { $0.loadUnaligned(as: UInt32.self).bigEndian }
 
             self.connection.receive(minimumIncompleteLength: Int(length), maximumLength: Int(length)) { [weak self] payload, _, _, error in
                 guard let self else { return }
