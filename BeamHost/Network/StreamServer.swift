@@ -17,7 +17,10 @@ final class StreamServer {
 
     private weak var appState: AppState?
     private var listener: NWListener?
-    private var activeSessions: [String: StreamSession] = [:]  // keyed by clientID
+    private var activeSessions: [String: StreamSession] = [:]  // keyed by session UUID
+    /// Serialises all reads/writes of activeSessions across the listener queue,
+    /// session sendQueues, and encoder callbacks (which all run on different threads).
+    private let sessionsQueue = DispatchQueue(label: "com.beam.server.sessions")
 
     /// Most-recent SPS/PPS blob, sent immediately to each newly-authenticated session.
     private var cachedSpsPps: Data? = nil
@@ -95,7 +98,7 @@ final class StreamServer {
     private func handleNewConnection(_ connection: NWConnection) {
         logger.info("New connection from \(String(describing: connection.endpoint))")
         let session = StreamSession(connection: connection, server: self)
-        activeSessions[session.id] = session
+        sessionsQueue.sync { activeSessions[session.id] = session }
         session.start()
     }
 
@@ -120,10 +123,13 @@ final class StreamServer {
 
     /// Called by a session when it disconnects.
     func sessionDisconnected(_ session: StreamSession) {
-        activeSessions.removeValue(forKey: session.id)
-        logger.info("Session disconnected: \(session.id). Active sessions: \(self.activeSessions.count)")
+        let remaining = sessionsQueue.sync { () -> Int in
+            activeSessions.removeValue(forKey: session.id)
+            return activeSessions.count
+        }
+        logger.info("Session disconnected: \(session.id). Active sessions: \(remaining)")
 
-        if activeSessions.isEmpty {
+        if remaining == 0 {
             Task {
                 await stopCapture()
                 await MainActor.run {
@@ -135,8 +141,12 @@ final class StreamServer {
     }
 
     func disconnectAllClients() {
-        activeSessions.values.forEach { $0.disconnect() }
-        activeSessions.removeAll()
+        let sessions = sessionsQueue.sync { () -> [StreamSession] in
+            let all = Array(activeSessions.values)
+            activeSessions.removeAll()
+            return all
+        }
+        sessions.forEach { $0.disconnect() }
         Task { await stopCapture() }
     }
 
@@ -214,16 +224,15 @@ extension StreamServer: ScreenCaptureDelegate {
 
 extension StreamServer: VideoEncoderDelegate {
     func videoEncoder(_ encoder: VideoEncoder, didEncodeFrame data: Data, presentationTime: CMTime, isKeyframe: Bool) {
-        activeSessions.values.forEach { session in
-            session.send(videoData: data, pts: presentationTime, isKeyframe: isKeyframe)
-        }
+        let sessions = sessionsQueue.sync { Array(activeSessions.values) }
+        sessions.forEach { $0.send(videoData: data, pts: presentationTime, isKeyframe: isKeyframe) }
     }
 
     func videoEncoder(_ encoder: VideoEncoder, didEncodeParameterSets spsData: Data, ppsData: Data) {
-        cachedSpsPps = spsData + ppsData  // keep for newly-connecting sessions
-        activeSessions.values.forEach { session in
-            session.send(spsPps: spsData + ppsData)
-        }
+        let combined = spsData + ppsData
+        cachedSpsPps = combined
+        let sessions = sessionsQueue.sync { Array(activeSessions.values) }
+        sessions.forEach { $0.send(spsPps: combined) }
     }
 }
 
@@ -231,8 +240,7 @@ extension StreamServer: VideoEncoderDelegate {
 
 extension StreamServer: AudioEncoderDelegate {
     func audioEncoder(_ encoder: AudioEncoder, didEncodeChunk data: Data, presentationTime: CMTime) {
-        activeSessions.values.forEach { session in
-            session.send(audioData: data, pts: presentationTime)
-        }
+        let sessions = sessionsQueue.sync { Array(activeSessions.values) }
+        sessions.forEach { $0.send(audioData: data, pts: presentationTime) }
     }
 }

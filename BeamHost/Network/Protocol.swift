@@ -35,11 +35,6 @@ struct BeamPacketHeader {
     let payloadLength: UInt32
 
     func serialized() -> Data {
-        var data = Data(count: BeamPacketHeader.size)
-        data.withUnsafeMutableBytes { ptr in
-            var magic = BeamPacketHeader.magic.bigEndian
-            withUnsafeBytes(of: &magic) { ptr.copyMemory(from: $0) }
-        }
         var magic = BeamPacketHeader.magic.bigEndian
         var length = payloadLength.bigEndian
         var out = Data(capacity: BeamPacketHeader.size)
