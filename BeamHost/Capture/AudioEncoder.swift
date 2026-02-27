@@ -191,7 +191,7 @@ final class AudioEncoder {
                 withUnsafeMutablePointer(to: &inputABLCopy) { ablPointer in
                     var userData = AudioEncoderUserData(
                         inputABL: ablPointer,
-                        remainingPackets: 1
+                        remainingPackets: 1024  // 1024 PCM frames = one AAC-LC frame
                     )
                     convertStatus = AudioConverterFillComplexBuffer(
                         converter,
@@ -266,7 +266,7 @@ private func audioEncoderDataProc(
     }
 
     ioData.pointee = userData.pointee.inputABL.pointee
-    ioNumberDataPackets.pointee = 1
+    ioNumberDataPackets.pointee = userData.pointee.remainingPackets  // 1024 PCM frames
     userData.pointee.remainingPackets = 0
     return noErr
 }
