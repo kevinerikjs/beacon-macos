@@ -77,7 +77,7 @@ jobs:
             -exportPath $RUNNER_TEMP/export \
             -exportOptionsPlist $RUNNER_TEMP/ExportOptions.plist
 
-          echo "APP_PATH=$RUNNER_TEMP/export/BeamHost.app" >> $GITHUB_ENV
+          echo "APP_PATH=$RUNNER_TEMP/export/Beam.app" >> $GITHUB_ENV
 
       - name: Build Unsigned App (Fallback)
         if: env.HAS_SIGNING != 'true'
@@ -90,19 +90,40 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO
 
-          echo "APP_PATH=$RUNNER_TEMP/DerivedData/Build/Products/Release/BeamHost.app" >> $GITHUB_ENV
+          echo "APP_PATH=$RUNNER_TEMP/DerivedData/Build/Products/Release/Beam.app" >> $GITHUB_ENV
 
       - name: Create DMG
         run: |
           brew install create-dmg
           VERSION=${GITHUB_REF_NAME}
+
+          ICON_SOURCE="$GITHUB_WORKSPACE/beam.icon/Assets/full-icon.png"
+          VOLICON_PATH="$RUNNER_TEMP/BeamVolume.icns"
+          if [ -f "$ICON_SOURCE" ]; then
+            ICONSET_DIR="$RUNNER_TEMP/BeamVolume.iconset"
+            mkdir -p "$ICONSET_DIR"
+            for SIZE in 16 32 128 256 512; do
+              sips -z $SIZE $SIZE "$ICON_SOURCE" --out "$ICONSET_DIR/icon_${SIZE}x${SIZE}.png"
+              DOUBLE_SIZE=$((SIZE * 2))
+              sips -z $DOUBLE_SIZE $DOUBLE_SIZE "$ICON_SOURCE" --out "$ICONSET_DIR/icon_${SIZE}x${SIZE}@2x.png"
+            done
+            iconutil -c icns "$ICONSET_DIR" -o "$VOLICON_PATH"
+          fi
+
+          CREATE_DMG_ARGS=(
+            --volname "Beam $VERSION"
+            --window-size 540 380
+            --icon-size 128
+            --icon "Beam.app" 140 190
+            --app-drop-link 400 190
+            --no-internet-enable
+          )
+          if [ -f "$VOLICON_PATH" ]; then
+            CREATE_DMG_ARGS+=(--volicon "$VOLICON_PATH")
+          fi
+
           create-dmg \
-            --volname "Beam $VERSION" \
-            --window-size 540 380 \
-            --icon-size 128 \
-            --icon "BeamHost.app" 140 190 \
-            --app-drop-link 400 190 \
-            --no-internet-enable \
+            "${CREATE_DMG_ARGS[@]}" \
             "$RUNNER_TEMP/Beam.dmg" \
             "$APP_PATH"
 

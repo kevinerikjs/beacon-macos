@@ -64,3 +64,24 @@ beam-macos/
 - Error handling: use typed throws where practical, always handle errors gracefully in UI
 - Naming: follow Swift API Design Guidelines exactly
 - No force unwraps (`!`) except for IB outlets (which we don't have) and known-safe static resources
+
+## Release Deployment (Public DMG Repo)
+
+- **Source vs releases split:** keep source code in `flowtheci/beam-macos` (can be private), publish installer assets in public `flowtheci/beam-releases`.
+- **Build host app (Release):**
+  - `xcodebuild -project BeamHost.xcodeproj -scheme BeamHost -configuration Release -destination 'platform=macOS' build`
+- **Locate built app path from Xcode settings:**
+  - `xcodebuild -project BeamHost.xcodeproj -scheme BeamHost -configuration Release -showBuildSettings | rg "TARGET_BUILD_DIR =|FULL_PRODUCT_NAME ="`
+  - Current product name is `Beam.app` (not `BeamHost.app`).
+- **Create DMG locally (manual path):**
+  - `create-dmg --volname "Beam vX.Y.Z" --window-size 540 380 --icon-size 128 --icon "Beam.app" 140 190 --app-drop-link 400 190 --volicon /path/to/BeamVolume.icns --no-internet-enable /path/Beam-vX.Y.Z.dmg /path/to/Beam.app`
+  - Build `BeamVolume.icns` from `beam.icon/Assets/full-icon.png` via `sips` + `iconutil` if needed.
+- **Publish release asset to public repo:**
+  - `gh release create vX.Y.Z --repo flowtheci/beam-releases --title "Beam vX.Y.Z" --notes-file /path/release-notes.md "/path/Beam-vX.Y.Z.dmg#Beam.dmg"`
+  - Keep stable asset name `Beam.dmg` so `latest/download/Beam.dmg` links remain valid.
+- **Web download links (beam-web):**
+  - Keep macOS download URL pointed to `https://github.com/flowtheci/beam-releases/releases/latest/download/Beam.dmg`
+  - Files that must stay aligned:
+    - `beam-web/src/components/Hero.tsx`
+    - `beam-web/src/components/Download.tsx`
+  - If release repo owner/name changes, update those constants and `beam-web` latest-release API fetch repo path.
