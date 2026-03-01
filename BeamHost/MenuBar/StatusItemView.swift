@@ -149,7 +149,7 @@ struct StatusItemView: View {
             .padding(.horizontal, 8)
             .padding(.top, 2)
 
-        Button("Beacon a Specific Window…") {
+        Button("Beam a Specific Window…") {
             openWindowPicker()
         }
     }
@@ -241,7 +241,7 @@ final class WindowPickerWindowController: NSWindowController {
         } else {
             let hostingController = NSHostingController(rootView: root)
             let newWindow = NSWindow(contentViewController: hostingController)
-            newWindow.title = "Beacon a Specific Window"
+            newWindow.title = "Beam a Specific Window"
             newWindow.styleMask = [.titled, .closable, .miniaturizable, .resizable]
             newWindow.contentMinSize = Self.minimumContentSize
             newWindow.setContentSize(Self.defaultContentSize)
