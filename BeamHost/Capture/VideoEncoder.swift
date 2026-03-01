@@ -6,7 +6,7 @@ import VideoToolbox
 import CoreMedia
 import OSLog
 
-private let logger = Logger(subsystem: "com.beam.host", category: "VideoEncoder")
+private let logger = Logger(subsystem: "com.beam.beacon", category: "VideoEncoder")
 
 // MARK: - Delegate
 
@@ -23,13 +23,13 @@ final class VideoEncoder {
     weak var delegate: VideoEncoderDelegate?
 
     private var session: VTCompressionSession?
-    private let encoderQueue = DispatchQueue(label: "com.beam.host.videoencoder", qos: .userInteractive)
+    private let encoderQueue = DispatchQueue(label: "com.beam.beacon.videoencoder", qos: .userInteractive)
 
     // Configuration
-    private let width: Int32
-    private let height: Int32
-    private let frameRate: Double
-    private let bitrateBps: Int
+    private var width: Int32
+    private var height: Int32
+    private var frameRate: Double
+    private var bitrateBps: Int
 
     /// Whether parameter sets (SPS/PPS) have been sent for this session.
     private var parameterSetsSent = false
@@ -47,6 +47,10 @@ final class VideoEncoder {
     // MARK: - Session Management
 
     func start() throws {
+        try encoderQueue.sync { try startInternal() }
+    }
+
+    private func startInternal() throws {
         guard session == nil else { return }
 
         var compressionSession: VTCompressionSession?
@@ -106,6 +110,23 @@ final class VideoEncoder {
         VTCompressionSessionPrepareToEncodeFrames(session)
         self.session = session
         logger.info("VideoEncoder started \(self.width)x\(self.height) @ \(Int(self.frameRate))fps, \(self.bitrateBps / 1_000_000)Mbps")
+    }
+
+    /// Tear down current session and create a new one with the given preset.
+    /// Resets parameter sets — new SPS/PPS + IDR will be emitted on the next encoded frame.
+    func reconfigure(preset: StreamQualityPreset) {
+        encoderQueue.async { [weak self] in
+            guard let self else { return }
+            if let s = session { VTCompressionSessionInvalidate(s); session = nil }
+            parameterSetsSent = false
+            forceKeyframeFlag = false
+            width = Int32(preset.width)
+            height = Int32(preset.height)
+            frameRate = preset.fps
+            bitrateBps = Int(preset.bitrateMbps * 1_000_000)
+            try? startInternal()
+            logger.info("VideoEncoder reconfigured → \(preset.width)x\(preset.height) @\(Int(preset.fps))fps")
+        }
     }
 
     func stop() {

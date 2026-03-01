@@ -56,6 +56,17 @@ final class AppState {
             LoginItemManager.shared.setEnabled(launchAtLogin)
         }
     }
+    // MARK: - Quality
+
+    let qualityManager = VideoQualityManager()
+
+    // MARK: - Window Streaming
+
+    /// Whether we're streaming a specific window instead of the full display.
+    var isWindowMode: Bool = false
+
+    /// Available on-screen windows for the window picker.
+    var availableWindows: [SCWindow] = []
 
     // MARK: - Connection
 
@@ -98,7 +109,7 @@ final class AppState {
         }
 
         // Start the stream server (Bonjour advertising is handled inside StreamServer)
-        let server = StreamServer(appState: self)
+        let server = StreamServer(appState: self, qualityManager: qualityManager)
         self.streamServer = server
         server.start()
     }
@@ -110,9 +121,31 @@ final class AppState {
         streamServer?.disconnectAllClients()
     }
 
+    // MARK: - Window Streaming
+
+    func refreshAvailableWindows() async {
+        availableWindows = await ScreenCapture.availableWindows()
+    }
+
+    @MainActor
+    func beamWindow(_ window: SCWindow) async {
+        guard let server = streamServer else { return }
+        await server.switchToWindowMode(window: window)
+        isWindowMode = true
+    }
+
+    @MainActor
+    func beamFullDisplay() async {
+        guard let server = streamServer else { return }
+        await server.switchToDisplayMode()
+        isWindowMode = false
+    }
+
     // MARK: - Pairing
 
     func unpairDevice(id: String) {
+        // Notify the device while it's still connected, then disconnect it
+        streamServer?.notifyUnpaired(deviceID: id)
         pairedDevices.removeAll { $0.id == id }
         KeyStore.shared.savePairedDevices(pairedDevices)
     }

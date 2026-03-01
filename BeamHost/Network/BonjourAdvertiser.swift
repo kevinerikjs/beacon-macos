@@ -5,7 +5,7 @@
 import Network
 import OSLog
 
-private let logger = Logger(subsystem: "com.beam.host", category: "Bonjour")
+private let logger = Logger(subsystem: "com.beam.beacon", category: "Bonjour")
 
 /// The Bonjour service type used by both macOS and iOS.
 let kBeamServiceType = "_beam._tcp"

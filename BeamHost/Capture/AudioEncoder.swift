@@ -1,19 +1,20 @@
 // AudioEncoder.swift
-// AAC-LC audio encoding via AudioToolbox AudioConverter.
-// Input: PCM from ScreenCaptureKit (Float32, interleaved stereo, 44100 Hz)
-// Output: AAC-LC ADTS frames
+// Normalizes ScreenCaptureKit audio to Float32 interleaved PCM and forwards it.
+// Input: PCM from ScreenCaptureKit (Float32 or Int16, interleaved/non-interleaved)
+// Output: Float32 interleaved PCM (stereo 44.1k target from stream config)
 
 import AudioToolbox
 import CoreMedia
 import AVFoundation
 import OSLog
 
-private let logger = Logger(subsystem: "com.beam.host", category: "AudioEncoder")
+private let logger = Logger(subsystem: "com.beam.beacon", category: "AudioEncoder")
 
 // MARK: - Delegate
 
 protocol AudioEncoderDelegate: AnyObject {
     func audioEncoder(_ encoder: AudioEncoder, didEncodeChunk data: Data, presentationTime: CMTime)
+    func audioEncoder(_ encoder: AudioEncoder, didUpdateSampleRate sampleRate: Double, channels: Int)
 }
 
 // MARK: - AudioEncoder
@@ -21,265 +22,179 @@ protocol AudioEncoderDelegate: AnyObject {
 final class AudioEncoder {
 
     weak var delegate: AudioEncoderDelegate?
-
-    private var converter: AudioConverterRef?
-    private let outputBitrate: Int = 128_000  // 128 kbps stereo AAC
-    private let sampleRate: Double = 44100
-    private let channels: UInt32 = 2
-
-    // PCM buffer for accumulating input before encoding
-    private var inputBuffer = Data()
-    private var inputPCMFormat: AudioStreamBasicDescription?
-
-    // Track presentation time of buffered audio
-    private var bufferStartTime: CMTime = .invalid
-
-    private let encoderQueue = DispatchQueue(label: "com.beam.host.audioencoder", qos: .userInteractive)
+    private let encoderQueue = DispatchQueue(label: "com.beam.beacon.audioencoder", qos: .userInteractive)
+    private var isRunning = false
+    private var lastPublishedSampleRate: Double = 0
+    private var lastPublishedChannels: Int = 0
 
     // MARK: - Lifecycle
 
     func start() throws {
-        guard converter == nil else { return }
-
-        // Input format: Float32 non-interleaved or Int16 - ScreenCaptureKit provides Float32
-        var inputFormat = AudioStreamBasicDescription(
-            mSampleRate: sampleRate,
-            mFormatID: kAudioFormatLinearPCM,
-            mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked,
-            mBytesPerPacket: 4 * channels,
-            mFramesPerPacket: 1,
-            mBytesPerFrame: 4 * channels,
-            mChannelsPerFrame: channels,
-            mBitsPerChannel: 32,
-            mReserved: 0
-        )
-
-        // Output format: AAC-LC
-        var outputFormat = AudioStreamBasicDescription(
-            mSampleRate: sampleRate,
-            mFormatID: kAudioFormatMPEG4AAC,
-            mFormatFlags: 0,
-            mBytesPerPacket: 0,
-            mFramesPerPacket: 1024,  // AAC-LC standard frame size
-            mBytesPerFrame: 0,
-            mChannelsPerFrame: channels,
-            mBitsPerChannel: 0,
-            mReserved: 0
-        )
-
-        var conv: AudioConverterRef?
-        let status = AudioConverterNew(&inputFormat, &outputFormat, &conv)
-        guard status == noErr, let conv else {
-            throw AudioEncoderError.converterCreationFailed(status)
-        }
-
-        // Set bitrate
-        var bitrate = UInt32(outputBitrate)
-        AudioConverterSetProperty(conv, kAudioConverterEncodeBitRate, UInt32(MemoryLayout<UInt32>.size), &bitrate)
-
-        self.converter = conv
-        self.inputPCMFormat = inputFormat
-        logger.info("AudioEncoder started - AAC-LC \(self.outputBitrate / 1000)kbps")
+        guard !isRunning else { return }
+        isRunning = true
+        logger.info("AudioEncoder started (Float32 PCM passthrough)")
     }
 
     func stop() {
-        guard let converter else { return }
-        AudioConverterDispose(converter)
-        self.converter = nil
-        inputBuffer.removeAll()
-        bufferStartTime = .invalid
+        guard isRunning else { return }
+        isRunning = false
+        lastPublishedSampleRate = 0
+        lastPublishedChannels = 0
         logger.info("AudioEncoder stopped")
     }
 
     // MARK: - Encode
 
     func encode(sampleBuffer: CMSampleBuffer) {
-        guard converter != nil else { return }
-
+        guard isRunning else { return }
         encoderQueue.async { [weak self] in
             self?.processSampleBuffer(sampleBuffer)
         }
     }
 
     private func processSampleBuffer(_ sampleBuffer: CMSampleBuffer) {
-        guard let converter else { return }
-
-        // Get PCM data from the sample buffer
-        guard let blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else { return }
-
-        var dataPointer: UnsafeMutablePointer<CChar>?
-        var dataLength = 0
-        let status = CMBlockBufferGetDataPointer(
-            blockBuffer,
-            atOffset: 0,
-            lengthAtOffsetOut: nil,
-            totalLengthOut: &dataLength,
-            dataPointerOut: &dataPointer
-        )
-        guard status == noErr, let ptr = dataPointer else { return }
-
-        // Capture presentation time of first buffered sample
+        guard isRunning else { return }
         let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
-        if !bufferStartTime.isValid { bufferStartTime = pts }
-
-        inputBuffer.append(UnsafeBufferPointer(start: UnsafePointer<UInt8>(bitPattern: Int(bitPattern: ptr)), count: dataLength))
-
-        // AAC-LC frame = 1024 PCM frames
-        let bytesPerPCMFrame = Int(4 * channels)  // Float32 * 2 channels
-        let aacFrameSize = 1024 * bytesPerPCMFrame
-
-        // Encode all complete AAC frames available
-        while inputBuffer.count >= aacFrameSize {
-            encodeOneAACFrame(from: converter)
-        }
+        guard let extracted = extractInterleavedFloat32PCM(from: sampleBuffer) else { return }
+        publishFormatIfNeeded(sampleRate: extracted.sampleRate, channels: extracted.channels)
+        delegate?.audioEncoder(self, didEncodeChunk: extracted.data, presentationTime: pts)
     }
 
-    private func encodeOneAACFrame(from converter: AudioConverterRef) {
-        let bytesPerPCMFrame = Int(4 * channels)
-        let aacFrameSize = 1024 * bytesPerPCMFrame
-
-        guard inputBuffer.count >= aacFrameSize else { return }
-
-        let pcmFrameData = inputBuffer.prefix(aacFrameSize)
-        inputBuffer.removeFirst(aacFrameSize)
-
-        // Build AudioBufferList for input PCM
-        var inputData = pcmFrameData
-        let encodedPTS = bufferStartTime
-
-        // Advance buffer start time by one AAC frame duration
-        if bufferStartTime.isValid {
-            let frameDuration = CMTime(value: 1024, timescale: CMTimeScale(sampleRate))
-            bufferStartTime = bufferStartTime + frameDuration
+    private func extractInterleavedFloat32PCM(from sampleBuffer: CMSampleBuffer) -> (data: Data, sampleRate: Double, channels: Int)? {
+        guard
+            let formatDescription = CMSampleBufferGetFormatDescription(sampleBuffer),
+            let asbdPtr = CMAudioFormatDescriptionGetStreamBasicDescription(formatDescription)
+        else {
+            logger.error("AudioEncoder: missing audio format description")
+            return nil
         }
+        let asbd = asbdPtr.pointee
 
-        inputData.withUnsafeMutableBytes { rawInput in
-            let inputPointer = rawInput.baseAddress!
+        let sourceChannels = Int(asbd.mChannelsPerFrame)
+        guard sourceChannels > 0 else { return nil }
+        let sampleCount = CMSampleBufferGetNumSamples(sampleBuffer)
+        guard sampleCount > 0 else { return nil }
 
-            let inputABL = AudioBufferList(
-                mNumberBuffers: 1,
-                mBuffers: AudioBuffer(
-                    mNumberChannels: channels,
-                    mDataByteSize: UInt32(aacFrameSize),
-                    mData: inputPointer
-                )
+        let isFloat = (asbd.mFormatFlags & kAudioFormatFlagIsFloat) != 0
+        let isSignedInt = (asbd.mFormatFlags & kAudioFormatFlagIsSignedInteger) != 0
+        let isNonInterleaved = (asbd.mFormatFlags & kAudioFormatFlagIsNonInterleaved) != 0
+        let bitsPerChannel = Int(asbd.mBitsPerChannel)
+
+        let extraBuffers = max(sourceChannels - 1, 0)
+        let ablByteCount = MemoryLayout<AudioBufferList>.size + (MemoryLayout<AudioBuffer>.size * extraBuffers)
+        var ablRaw = [UInt8](repeating: 0, count: ablByteCount)
+        var retainedBlock: CMBlockBuffer?
+
+        let status: OSStatus = ablRaw.withUnsafeMutableBytes { raw in
+            CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
+                sampleBuffer,
+                bufferListSizeNeededOut: nil,
+                bufferListOut: raw.bindMemory(to: AudioBufferList.self).baseAddress!,
+                bufferListSize: ablByteCount,
+                blockBufferAllocator: kCFAllocatorDefault,
+                blockBufferMemoryAllocator: kCFAllocatorDefault,
+                flags: kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment,
+                blockBufferOut: &retainedBlock
             )
+        }
 
-            // Output buffer - AAC frame is typically < 768 bytes per channel
-            let outputBufferSize = 2048
-            var outputData = Data(count: outputBufferSize)
-            outputData.withUnsafeMutableBytes { rawOutput in
-                let outputPointer = rawOutput.baseAddress!
+        guard status == noErr else {
+            logger.error("AudioEncoder: CMSampleBufferGetAudioBufferList failed (\(status))")
+            return nil
+        }
 
-                var outputABL = AudioBufferList(
-                    mNumberBuffers: 1,
-                    mBuffers: AudioBuffer(
-                        mNumberChannels: channels,
-                        mDataByteSize: UInt32(outputBufferSize),
-                        mData: outputPointer
-                    )
-                )
+        return ablRaw.withUnsafeMutableBytes { raw in
+            let abl = raw.baseAddress!.assumingMemoryBound(to: AudioBufferList.self)
+            let numberBuffers = Int(abl.pointee.mNumberBuffers)
+            let firstBuffer = withUnsafeMutablePointer(to: &abl.pointee.mBuffers) { $0 }
 
-                var ioOutputDataPacketSize: UInt32 = 1
-                var packetDescription = AudioStreamPacketDescription()
+            if numberBuffers == 1 && !isNonInterleaved {
+                let buffer = firstBuffer.pointee
+                guard let dataPtr = buffer.mData else { return nil }
 
-                // AudioConverterFillComplexBuffer is synchronous - pointer is valid throughout
-                var inputABLCopy = inputABL
-                var convertStatus: OSStatus = noErr
-                var encodedBytes = 0
-
-                withUnsafeMutablePointer(to: &inputABLCopy) { ablPointer in
-                    var userData = AudioEncoderUserData(
-                        inputABL: ablPointer,
-                        remainingPackets: 1024  // 1024 PCM frames = one AAC-LC frame
-                    )
-                    convertStatus = AudioConverterFillComplexBuffer(
-                        converter,
-                        audioEncoderDataProc,
-                        &userData,
-                        &ioOutputDataPacketSize,
-                        &outputABL,
-                        &packetDescription
-                    )
-                    encodedBytes = Int(outputABL.mBuffers.mDataByteSize)
+                if isFloat && bitsPerChannel == 32 {
+                    let byteCount = min(Int(buffer.mDataByteSize), sampleCount * sourceChannels * MemoryLayout<Float32>.size)
+                    return (Data(bytes: dataPtr, count: byteCount), asbd.mSampleRate, sourceChannels)
                 }
 
-                if convertStatus == noErr, ioOutputDataPacketSize > 0, encodedBytes > 0 {
-                    let encodedData = Data(bytes: outputPointer, count: encodedBytes)
-                    let adtsData = addADTSHeader(to: encodedData)
-                    self.delegate?.audioEncoder(self, didEncodeChunk: adtsData, presentationTime: encodedPTS)
+                if isSignedInt && bitsPerChannel == 16 {
+                    let maxSamples = min(Int(buffer.mDataByteSize) / MemoryLayout<Int16>.size, sampleCount * sourceChannels)
+                    let src = dataPtr.assumingMemoryBound(to: Int16.self)
+                    var out = Data(count: maxSamples * MemoryLayout<Float32>.size)
+                    out.withUnsafeMutableBytes { dstRaw in
+                        let dst = dstRaw.baseAddress!.assumingMemoryBound(to: Float32.self)
+                        for i in 0..<maxSamples {
+                            dst[i] = Float32(src[i]) / Float32(Int16.max)
+                        }
+                    }
+                    return (out, asbd.mSampleRate, sourceChannels)
                 }
+
+                logger.error("AudioEncoder: unsupported interleaved source format flags=\(asbd.mFormatFlags), bits=\(bitsPerChannel)")
+                return nil
             }
+
+            // Non-interleaved path: interleave channels into Float32 output.
+            let channelCount = min(sourceChannels, numberBuffers)
+            guard channelCount > 0 else { return nil }
+
+            if isFloat && bitsPerChannel == 32 {
+                var frameCount = sampleCount
+                for ch in 0..<channelCount {
+                    let chBuffer = (firstBuffer + ch).pointee
+                    frameCount = min(frameCount, Int(chBuffer.mDataByteSize) / MemoryLayout<Float32>.size)
+                }
+
+                var out = Data(count: frameCount * channelCount * MemoryLayout<Float32>.size)
+                out.withUnsafeMutableBytes { dstRaw in
+                    let dst = dstRaw.baseAddress!.assumingMemoryBound(to: Float32.self)
+                    for ch in 0..<channelCount {
+                        let chBuffer = (firstBuffer + ch).pointee
+                        guard let srcPtr = chBuffer.mData else { continue }
+                        let src = srcPtr.assumingMemoryBound(to: Float32.self)
+                        for frame in 0..<frameCount {
+                            dst[(frame * channelCount) + ch] = src[frame]
+                        }
+                    }
+                }
+                return (out, asbd.mSampleRate, channelCount)
+            }
+
+            if isSignedInt && bitsPerChannel == 16 {
+                var frameCount = sampleCount
+                for ch in 0..<channelCount {
+                    let chBuffer = (firstBuffer + ch).pointee
+                    frameCount = min(frameCount, Int(chBuffer.mDataByteSize) / MemoryLayout<Int16>.size)
+                }
+
+                var out = Data(count: frameCount * channelCount * MemoryLayout<Float32>.size)
+                out.withUnsafeMutableBytes { dstRaw in
+                    let dst = dstRaw.baseAddress!.assumingMemoryBound(to: Float32.self)
+                    for ch in 0..<channelCount {
+                        let chBuffer = (firstBuffer + ch).pointee
+                        guard let srcPtr = chBuffer.mData else { continue }
+                        let src = srcPtr.assumingMemoryBound(to: Int16.self)
+                        for frame in 0..<frameCount {
+                            dst[(frame * channelCount) + ch] = Float32(src[frame]) / Float32(Int16.max)
+                        }
+                    }
+                }
+                return (out, asbd.mSampleRate, channelCount)
+            }
+
+            logger.error("AudioEncoder: unsupported non-interleaved source format flags=\(asbd.mFormatFlags), bits=\(bitsPerChannel)")
+            return nil
         }
     }
 
-    // MARK: - ADTS Header
-    // ADTS wrapping is needed for the iOS AVAudioEngine to consume the AAC frames.
-
-    private func addADTSHeader(to aacData: Data) -> Data {
-        // ADTS header is 7 bytes (without CRC)
-        let adtsLength = aacData.count + 7
-        var header = Data(count: 7)
-
-        // AAC-LC profile = 1 (profile - 1)
-        // 44100 Hz sample rate index = 4
-        // 2 channels
-        let samplerateIndex: UInt8 = 4   // 44100 Hz
-        let channelConfig: UInt8 = UInt8(channels)
-        let profile: UInt8 = 1          // AAC-LC
-
-        header[0] = 0xFF
-        header[1] = 0xF9  // MPEG-4 AAC, no CRC
-        header[2] = ((profile & 0x3) << 6) | ((samplerateIndex & 0xF) << 2) | ((channelConfig >> 2) & 0x1)
-        header[3] = ((channelConfig & 0x3) << 6) | (UInt8((adtsLength >> 11) & 0x3))
-        header[4] = UInt8((adtsLength >> 3) & 0xFF)
-        header[5] = UInt8((adtsLength & 0x7) << 5) | 0x1F
-        header[6] = 0xFC
-
-        var result = header
-        result.append(aacData)
-        return result
-    }
-}
-
-// MARK: - Converter Callback User Data
-
-private struct AudioEncoderUserData {
-    var inputABL: UnsafeMutablePointer<AudioBufferList>
-    var remainingPackets: UInt32
-}
-
-private func audioEncoderDataProc(
-    _ converter: AudioConverterRef,
-    _ ioNumberDataPackets: UnsafeMutablePointer<UInt32>,
-    _ ioData: UnsafeMutablePointer<AudioBufferList>,
-    _ outDataPacketDescription: UnsafeMutablePointer<UnsafeMutablePointer<AudioStreamPacketDescription>?>?,
-    _ inUserData: UnsafeMutableRawPointer?
-) -> OSStatus {
-    guard let userData = inUserData?.assumingMemoryBound(to: AudioEncoderUserData.self) else {
-        return -1
-    }
-
-    if userData.pointee.remainingPackets == 0 {
-        ioNumberDataPackets.pointee = 0
-        return kAudio_ParamError
-    }
-
-    ioData.pointee = userData.pointee.inputABL.pointee
-    ioNumberDataPackets.pointee = userData.pointee.remainingPackets  // 1024 PCM frames
-    userData.pointee.remainingPackets = 0
-    return noErr
-}
-
-// MARK: - Errors
-
-enum AudioEncoderError: Error, LocalizedError {
-    case converterCreationFailed(OSStatus)
-
-    var errorDescription: String? {
-        switch self {
-        case .converterCreationFailed(let code):
-            return "AudioConverter creation failed (OSStatus \(code))"
-        }
+    private func publishFormatIfNeeded(sampleRate: Double, channels: Int) {
+        let safeChannels = max(1, channels)
+        let sampleRateChanged = abs(sampleRate - lastPublishedSampleRate) > 1
+        let channelsChanged = safeChannels != lastPublishedChannels
+        guard sampleRateChanged || channelsChanged else { return }
+        lastPublishedSampleRate = sampleRate
+        lastPublishedChannels = safeChannels
+        delegate?.audioEncoder(self, didUpdateSampleRate: sampleRate, channels: safeChannels)
+        logger.info("AudioEncoder format updated: \(sampleRate, format: .fixed(precision: 0)) Hz, \(safeChannels)ch")
     }
 }

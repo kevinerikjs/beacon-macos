@@ -5,7 +5,7 @@ import AppKit
 import ApplicationServices
 import OSLog
 
-private let logger = Logger(subsystem: "com.beam.host", category: "ControlChannel")
+private let logger = Logger(subsystem: "com.beam.beacon", category: "ControlChannel")
 
 /// Dispatches media key events to macOS system media controls.
 enum MediaKeyDispatcher {

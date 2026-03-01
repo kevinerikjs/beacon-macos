@@ -7,7 +7,7 @@ import SwiftUI
 import CryptoKit
 import OSLog
 
-private let logger = Logger(subsystem: "com.beam.host", category: "PairingManager")
+private let logger = Logger(subsystem: "com.beam.beacon", category: "PairingManager")
 
 @Observable
 final class PairingManager {
@@ -18,9 +18,6 @@ final class PairingManager {
 
     /// The current 6-digit pairing code displayed in the QR / code window.
     var currentCode: String? = nil
-
-    /// The QR code image for the current pairing session.
-    var qrCodeImage: NSImage? = nil
 
     /// Whether a pairing session is in progress.
     var isPairingActive: Bool = false
@@ -47,11 +44,6 @@ final class PairingManager {
         // Generate 6-digit code
         let code = String(format: "%06d", Int.random(in: 0..<1_000_000))
         currentCode = code
-
-        // Generate QR code containing: beamlink://pair?id=<deviceID>&code=<code>
-        let pairingURL = "beamlink://pair?id=\(deviceID)&code=\(code)"
-        qrCodeImage = QRCodeGenerator.generate(from: pairingURL, size: CGSize(width: 200, height: 200))
-
         isPairingActive = true
 
         // Send challenge to iPhone so it knows a code has been issued
@@ -143,7 +135,7 @@ final class PairingManager {
         codeExpiryTask?.cancel()
         codeExpiryTask = nil
         currentCode = nil
-        qrCodeImage = nil
+
         isPairingActive = false
         pendingDeviceID = nil
         pendingDeviceName = nil

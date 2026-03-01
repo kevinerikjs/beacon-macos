@@ -7,7 +7,7 @@ import CoreMedia
 import CoreVideo
 import OSLog
 
-private let logger = Logger(subsystem: "com.beam.host", category: "ScreenCapture")
+private let logger = Logger(subsystem: "com.beam.beacon", category: "ScreenCapture")
 
 // MARK: - Delegate Protocol
 
@@ -25,9 +25,17 @@ final class ScreenCapture: NSObject {
 
     private var stream: SCStream?
     private let captureQueue = DispatchQueue(
-        label: "com.beam.host.capture",
+        label: "com.beam.beacon.capture",
         qos: .userInteractive
     )
+
+    // Track current window filter (nil = full display)
+    private var currentWindow: SCWindow? = nil
+    private var currentDisplay: SCDisplay?
+    private var currentWidth: Int = 1920
+    private var currentHeight: Int = 1080
+    private var currentFrameRate: Double = 30
+    private var normalizedLockedViewport: CGRect? = nil
 
     // MARK: - Permission
 
@@ -63,28 +71,37 @@ final class ScreenCapture: NSObject {
         width: Int = 1920,
         height: Int = 1080,
         frameRate: Double = 30,
-        captureAudio: Bool = true
+        captureAudio: Bool = true,
+        initialWindow: SCWindow? = nil,
+        initialLockedViewport: CGRect? = nil
     ) async throws {
         guard stream == nil else { return }
 
-        // Build content filter: capture the whole display
-        let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
-
         // Stream configuration
-        let config = SCStreamConfiguration()
-        config.width = width
-        config.height = height
-        config.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(frameRate))
-        config.queueDepth = 5
-        config.pixelFormat = kCVPixelFormatType_32BGRA
-        config.scalesToFit = true
-        config.showsCursor = true
+        currentDisplay = display
+        currentWidth = width
+        currentHeight = height
+        currentFrameRate = frameRate
+        currentWindow = initialWindow
+        if let initialLockedViewport {
+            normalizedLockedViewport = CGRect(
+                x: initialLockedViewport.origin.x.clamped(to: 0...1),
+                y: initialLockedViewport.origin.y.clamped(to: 0...1),
+                width: initialLockedViewport.width.clamped(to: 0.1...1),
+                height: initialLockedViewport.height.clamped(to: 0.1...1)
+            )
+        } else {
+            normalizedLockedViewport = nil
+        }
 
-        // Audio capture
-        config.capturesAudio = captureAudio
-        config.sampleRate = 44100
-        config.channelCount = 2
-        // Note: excludesCurrentProcessAudioFromCapture available on macOS 15+
+        let filter: SCContentFilter
+        if let initialWindow {
+            filter = SCContentFilter(desktopIndependentWindow: initialWindow)
+        } else {
+            filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
+        }
+
+        let config = makeConfiguration(captureAudio: captureAudio)
 
         let captureStream = SCStream(filter: filter, configuration: config, delegate: self)
 
@@ -106,7 +123,11 @@ final class ScreenCapture: NSObject {
 
         try await captureStream.startCapture()
         self.stream = captureStream
-        logger.info("Screen capture started on display \(display.displayID)")
+        if let initialWindow {
+            logger.info("Screen capture started in window mode: \(initialWindow.title ?? "unknown")")
+        } else {
+            logger.info("Screen capture started on display \(display.displayID)")
+        }
     }
 
     func stop() async {
@@ -114,6 +135,9 @@ final class ScreenCapture: NSObject {
         do {
             try await stream.stopCapture()
             self.stream = nil
+            self.currentWindow = nil
+            self.currentDisplay = nil
+            self.normalizedLockedViewport = nil
             logger.info("Screen capture stopped")
         } catch {
             logger.error("Failed to stop capture stream: \(error)")
@@ -123,8 +147,200 @@ final class ScreenCapture: NSObject {
     /// Update the display being captured without restarting the full stream.
     func updateDisplay(_ display: SCDisplay) async throws {
         guard let stream else { return }
+        currentDisplay = display
         let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
         try await stream.updateContentFilter(filter)
+        if currentWindow == nil {
+            try await stream.updateConfiguration(makeConfiguration(captureAudio: true))
+        }
+    }
+
+    /// Update stream resolution and frame rate without restarting the stream.
+    func updateConfiguration(preset: StreamQualityPreset) async throws {
+        guard let stream else { return }
+        currentWidth = preset.width
+        currentHeight = preset.height
+        currentFrameRate = preset.fps
+        try await stream.updateConfiguration(makeConfiguration(captureAudio: true))
+        logger.info("ScreenCapture updated → \(preset.width)x\(preset.height) @\(Int(preset.fps))fps")
+    }
+
+    /// Switch to capturing a specific window. Call after start().
+    func startWindowMode(window: SCWindow) async throws {
+        guard let stream else { return }
+        let filter = SCContentFilter(desktopIndependentWindow: window)
+        try await stream.updateContentFilter(filter)
+        currentWindow = window
+        logger.info("ScreenCapture switched to window: \(window.title ?? "unknown")")
+    }
+
+    /// Return to capturing the full display.
+    func stopWindowMode(display: SCDisplay) async throws {
+        guard let stream else { return }
+        currentDisplay = display
+        let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
+        try await stream.updateContentFilter(filter)
+        try await stream.updateConfiguration(makeConfiguration(captureAudio: true))
+        currentWindow = nil
+        logger.info("ScreenCapture returned to full display")
+    }
+
+    /// Crop full-display capture to a normalized viewport rect (0...1 space).
+    /// Pass nil to return to uncropped full-display capture.
+    func setLockedViewport(_ normalizedRect: CGRect?) async throws {
+        guard let stream else { return }
+        if let normalizedRect {
+            normalizedLockedViewport = CGRect(
+                x: normalizedRect.origin.x.clamped(to: 0...1),
+                y: normalizedRect.origin.y.clamped(to: 0...1),
+                width: normalizedRect.width.clamped(to: 0.1...1),
+                height: normalizedRect.height.clamped(to: 0.1...1)
+            )
+        } else {
+            normalizedLockedViewport = nil
+        }
+        try await stream.updateConfiguration(makeConfiguration(captureAudio: true))
+        logger.info("ScreenCapture viewport lock updated: \(normalizedRect != nil)")
+    }
+
+    private func makeConfiguration(captureAudio: Bool) -> SCStreamConfiguration {
+        let config = SCStreamConfiguration()
+        config.width = currentWidth
+        config.height = currentHeight
+        config.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(currentFrameRate))
+        config.queueDepth = 5
+        config.pixelFormat = kCVPixelFormatType_32BGRA
+        config.scalesToFit = true
+        config.showsCursor = true
+        config.capturesAudio = captureAudio
+        config.sampleRate = 44100
+        config.channelCount = 2
+
+        if let normalizedLockedViewport {
+            let sourceSize: CGSize
+            if let currentWindow {
+                sourceSize = CGSize(width: currentWindow.frame.width, height: currentWindow.frame.height)
+            } else if let display = currentDisplay {
+                sourceSize = CGSize(width: CGFloat(display.width), height: CGFloat(display.height))
+            } else {
+                return config
+            }
+            let sourceWidth = sourceSize.width
+            let sourceHeight = sourceSize.height
+            guard sourceWidth > 0, sourceHeight > 0 else { return config }
+            let frameSize = CGSize(width: CGFloat(currentWidth), height: CGFloat(currentHeight))
+            let sourceNormalizedRect = sourceNormalizedViewport(
+                fromFrameNormalizedRect: normalizedLockedViewport,
+                sourceSize: sourceSize,
+                frameSize: frameSize
+            )
+            guard !sourceNormalizedRect.isNull else { return config }
+
+            let requestedRect = CGRect(
+                x: (sourceNormalizedRect.origin.x * sourceWidth).clamped(to: 0...sourceWidth),
+                y: (sourceNormalizedRect.origin.y * sourceHeight).clamped(to: 0...sourceHeight),
+                width: (sourceNormalizedRect.width * sourceWidth).clamped(to: 64...sourceWidth),
+                height: (sourceNormalizedRect.height * sourceHeight).clamped(to: 64...sourceHeight)
+            ).intersection(CGRect(x: 0, y: 0, width: sourceWidth, height: sourceHeight))
+
+            let lockedRect = constrained16x9Rect(
+                from: requestedRect,
+                within: CGRect(x: 0, y: 0, width: sourceWidth, height: sourceHeight)
+            )
+            if !lockedRect.isNull, lockedRect.width > 10, lockedRect.height > 10 {
+                config.sourceRect = lockedRect
+            }
+        }
+        return config
+    }
+
+    /// Convert iOS lock coordinates from encoded-frame normalized space into source-content normalized space.
+    /// This compensates for letterbox/pillarbox introduced by `scalesToFit` when source and output aspect differ.
+    private func sourceNormalizedViewport(
+        fromFrameNormalizedRect frameRect: CGRect,
+        sourceSize: CGSize,
+        frameSize: CGSize
+    ) -> CGRect {
+        guard
+            frameSize.width > 0, frameSize.height > 0,
+            sourceSize.width > 0, sourceSize.height > 0
+        else {
+            return .null
+        }
+
+        let frameAspect = frameSize.width / frameSize.height
+        let sourceAspect = sourceSize.width / sourceSize.height
+
+        var contentRectInFrame = CGRect(x: 0, y: 0, width: 1, height: 1)
+        if sourceAspect > frameAspect {
+            let contentHeight = (frameAspect / sourceAspect).clamped(to: 0.001...1)
+            contentRectInFrame = CGRect(x: 0, y: (1 - contentHeight) / 2, width: 1, height: contentHeight)
+        } else if sourceAspect < frameAspect {
+            let contentWidth = (sourceAspect / frameAspect).clamped(to: 0.001...1)
+            contentRectInFrame = CGRect(x: (1 - contentWidth) / 2, y: 0, width: contentWidth, height: 1)
+        }
+
+        let mapped = CGRect(
+            x: (frameRect.minX - contentRectInFrame.minX) / contentRectInFrame.width,
+            y: (frameRect.minY - contentRectInFrame.minY) / contentRectInFrame.height,
+            width: frameRect.width / contentRectInFrame.width,
+            height: frameRect.height / contentRectInFrame.height
+        )
+
+        let unit = CGRect(x: 0, y: 0, width: 1, height: 1)
+        let normalized = mapped.intersection(unit)
+        guard !normalized.isNull, normalized.width > 0, normalized.height > 0 else { return .null }
+        return normalized
+    }
+
+    private func constrained16x9Rect(from rect: CGRect, within bounds: CGRect) -> CGRect {
+        guard !rect.isNull, rect.width > 0, rect.height > 0 else { return .null }
+
+        let targetAspect: CGFloat = 16.0 / 9.0
+        let rectAspect = rect.width / rect.height
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+
+        var width: CGFloat
+        var height: CGFloat
+        if rectAspect > targetAspect {
+            height = rect.height
+            width = height * targetAspect
+        } else {
+            width = rect.width
+            height = width / targetAspect
+        }
+
+        // Keep a minimum footprint while preserving 16:9.
+        if height < 64 {
+            height = 64
+            width = height * targetAspect
+        }
+
+        // Clamp to bounds while preserving 16:9.
+        if width > bounds.width {
+            width = bounds.width
+            height = width / targetAspect
+        }
+        if height > bounds.height {
+            height = bounds.height
+            width = height * targetAspect
+        }
+
+        let originX = (center.x - width / 2).clamped(to: bounds.minX...(bounds.maxX - width))
+        let originY = (center.y - height / 2).clamped(to: bounds.minY...(bounds.maxY - height))
+
+        return CGRect(x: originX, y: originY, width: width, height: height)
+    }
+
+    /// Get all currently available on-screen windows (for the window picker menu).
+    static func availableWindows() async -> [SCWindow] {
+        do {
+            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+            return content.windows.filter { $0.frame.width > 100 && $0.frame.height > 100 }
+        } catch {
+            logger.error("Failed to enumerate windows: \(error)")
+            return []
+        }
     }
 }
 
@@ -157,5 +373,11 @@ extension ScreenCapture: SCStreamOutput {
         @unknown default:
             break
         }
+    }
+}
+
+private extension Comparable {
+    func clamped(to range: ClosedRange<Self>) -> Self {
+        min(max(self, range.lowerBound), range.upperBound)
     }
 }

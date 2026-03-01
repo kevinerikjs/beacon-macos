@@ -44,7 +44,7 @@ struct PairingView: View {
                     .foregroundStyle(.orange)
                 Text("Pair Your iPhone")
                     .font(.title2.weight(.semibold))
-                Text("Open Beam on your iPhone and scan the QR code, or enter the code manually.")
+                Text("Open Beam on your iPhone and enter the code shown below.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -72,35 +72,18 @@ struct PairingView: View {
 
     @ViewBuilder
     private var activePairingContent: some View {
-        VStack(spacing: 16) {
-            // QR Code
-            if let qrImage = pairingManager.qrCodeImage {
-                Image(nsImage: qrImage)
-                    .interpolation(.none)
-                    .resizable()
-                    .frame(width: 180, height: 180)
-                    .background(.white)
-                    .cornerRadius(8)
-                    .padding(4)
-                    .background(.white)
-                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(.quaternary, lineWidth: 1))
+        VStack(spacing: 12) {
+            if let code = pairingManager.currentCode {
+                let formatted = "\(code.prefix(3)) \(code.suffix(3))"
+                Text(formatted)
+                    .font(.system(size: 48, weight: .bold, design: .monospaced))
+                    .tracking(6)
+                    .foregroundStyle(.primary)
             }
-
-            // Manual code
-            VStack(spacing: 6) {
-                Text("Or enter this code on your iPhone:")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                if let code = pairingManager.currentCode {
-                    // Display code in groups: 123 456
-                    let formatted = "\(code.prefix(3)) \(code.suffix(3))"
-                    Text(formatted)
-                        .font(.system(size: 36, weight: .bold, design: .monospaced))
-                        .tracking(4)
-                        .foregroundStyle(.primary)
-                }
-            }
+            Text("Enter this code in the Beam app on your iPhone.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
         }
     }
 

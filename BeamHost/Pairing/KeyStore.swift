@@ -7,14 +7,14 @@ import Foundation
 import Security
 import OSLog
 
-private let logger = Logger(subsystem: "com.beam.host", category: "KeyStore")
+private let logger = Logger(subsystem: "com.beam.beacon", category: "KeyStore")
 
 final class KeyStore {
 
     static let shared = KeyStore()
     private init() {}
 
-    private let service = "com.beam.host"
+    private let service = "com.beam.beacon"
     private let pairedDevicesKey = "paired_devices"
 
     // MARK: - Paired Devices

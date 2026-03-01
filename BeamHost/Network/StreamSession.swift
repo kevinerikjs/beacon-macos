@@ -7,7 +7,7 @@ import CoreMedia
 import CryptoKit
 import OSLog
 
-private let logger = Logger(subsystem: "com.beam.host", category: "StreamSession")
+private let logger = Logger(subsystem: "com.beam.beacon", category: "StreamSession")
 
 /// Max UDP payload size (safe for most networks; keeps under typical MTU of 1500)
 private let kMaxUDPPayload = 1400
@@ -24,6 +24,8 @@ final class StreamSession {
 
     private var isAuthenticated = false
     private var sharedSecret: SymmetricKey?
+    private(set) var authenticatedDeviceID: String?
+    private var isTerminated = false
 
     // Sequence tracking
     private var videoFrameNumber: UInt32 = 0
@@ -31,6 +33,8 @@ final class StreamSession {
 
     private let sendQueue = DispatchQueue(label: "com.beam.session.send", qos: .userInteractive)
     private var heartbeatTimer: DispatchSourceTimer?
+    private var lastPongReceivedAt = Date()
+    private let heartbeatTimeout: TimeInterval = 12
 
     init(connection: NWConnection, server: StreamServer) {
         self.connection = connection
@@ -48,6 +52,8 @@ final class StreamSession {
     }
 
     func disconnect() {
+        guard !isTerminated else { return }
+        isTerminated = true
         heartbeatTimer?.cancel()
         heartbeatTimer = nil
         connection.cancel()
@@ -75,14 +81,16 @@ final class StreamSession {
         // Read 4-byte length prefix first
         connection.receive(minimumIncompleteLength: 4, maximumLength: 4) { [weak self] data, _, isComplete, error in
             guard let self else { return }
-            if let error { logger.error("Receive error: \(error)"); return }
+            if let error { logger.error("Receive error: \(error)"); self.disconnect(); return }
+            if isComplete { logger.info("Session \(self.id) peer closed connection"); self.disconnect(); return }
             guard let data, data.count == 4 else { return }
 
             let length = data.withUnsafeBytes { $0.loadUnaligned(as: UInt32.self).bigEndian }
 
-            self.connection.receive(minimumIncompleteLength: Int(length), maximumLength: Int(length)) { [weak self] payload, _, _, error in
+            self.connection.receive(minimumIncompleteLength: Int(length), maximumLength: Int(length)) { [weak self] payload, _, isComplete, error in
                 guard let self else { return }
-                if let error { logger.error("Receive payload error: \(error)"); return }
+                if let error { logger.error("Receive payload error: \(error)"); self.disconnect(); return }
+                if isComplete { self.disconnect(); return }
                 guard let payload else { return }
 
                 self.handleIncomingMessage(payload)
@@ -153,6 +161,7 @@ final class StreamSession {
         // Success
         isAuthenticated = true
         sharedSecret = SymmetricKey(data: device.sharedSecret)
+        authenticatedDeviceID = deviceID
 
         sendPairingResponse(BeamPairingMessage(
             type: .authSuccess, deviceName: Host.current().localizedName,
@@ -192,6 +201,8 @@ final class StreamSession {
             if case .mediaKey(let payload) = message.payload {
                 MediaKeyDispatcher.send(payload.key)
             }
+        case .pong:
+            lastPongReceivedAt = Date()
         case .ping:
             let pong = BeamControlMessage(type: .pong, payload: nil)
             if let data = try? JSONEncoder().encode(pong) {
@@ -199,10 +210,58 @@ final class StreamSession {
             }
         case .streamStop:
             logger.info("Client requested stream stop")
-            server?.sessionDisconnected(self)
+            disconnect()
+        case .qualityFeedback:
+            if case .qualityFeedback(let payload) = message.payload {
+                server?.handleQualityFeedback(payload.quality)
+            }
+        case .qualityRequest:
+            if case .qualityRequest(let payload) = message.payload {
+                server?.handleQualityRequest(payload.preset)
+            }
+        case .viewportLockRequest:
+            if case .viewportLock(let payload) = message.payload {
+                server?.handleViewportLockRequest(payload)
+            }
         default:
             break
         }
+    }
+
+    // MARK: - Quality Changed
+
+    func sendQualityChanged(_ preset: StreamQualityPreset) {
+        let msg = BeamControlMessage(
+            type: .qualityChanged,
+            payload: .qualityChanged(BeamQualityPayload(preset: preset))
+        )
+        guard let data = try? JSONEncoder().encode(msg) else { return }
+        let header = BeamPacketHeader(type: .control, flags: 0, payloadLength: UInt32(data.count))
+        var packet = header.serialized()
+        packet.append(data)
+        sendTCP(packet.lengthPrefixed())
+    }
+
+    func sendAudioFormatChanged(sampleRate: Double, channels: Int) {
+        let msg = BeamControlMessage(
+            type: .audioFormatChanged,
+            payload: .audioFormat(BeamAudioFormatPayload(sampleRate: sampleRate, channels: channels))
+        )
+        guard let data = try? JSONEncoder().encode(msg) else { return }
+        let header = BeamPacketHeader(type: .control, flags: 0, payloadLength: UInt32(data.count))
+        var packet = header.serialized()
+        packet.append(data)
+        sendTCP(packet.lengthPrefixed())
+    }
+
+    // MARK: - Unpair notification
+
+    func sendUnpaired() {
+        let msg = BeamPairingMessage(
+            type: .unpaired, deviceName: nil, deviceID: nil,
+            code: nil, sharedSecret: nil, error: nil
+        )
+        sendPairingResponse(msg)
     }
 
     // MARK: - Streaming
@@ -215,10 +274,17 @@ final class StreamSession {
     // MARK: - Heartbeat
 
     private func startHeartbeat() {
+        lastPongReceivedAt = Date()
         let timer = DispatchSource.makeTimerSource(queue: sendQueue)
         timer.schedule(deadline: .now() + 5, repeating: 5)
         timer.setEventHandler { [weak self] in
             guard let self, isAuthenticated else { return }
+            let elapsed = Date().timeIntervalSince(lastPongReceivedAt)
+            if elapsed > heartbeatTimeout {
+                logger.warning("Heartbeat timeout for session \(self.id) (\(elapsed, format: .fixed(precision: 1))s without pong)")
+                disconnect()
+                return
+            }
             // Send a raw heartbeat packet; iOS responds with a pong (keeps connection alive)
             let header = BeamPacketHeader(type: .heartbeat, flags: 0, payloadLength: 0)
             sendTCP(header.serialized().lengthPrefixed())
@@ -290,8 +356,11 @@ final class StreamSession {
     // MARK: - Network Send Helpers
 
     private func sendTCP(_ data: Data) {
-        connection.send(content: data, completion: .contentProcessed { error in
-            if let error { logger.error("TCP send error: \(error)") }
+        connection.send(content: data, completion: .contentProcessed { [weak self] error in
+            if let error {
+                logger.error("TCP send error: \(error)")
+                self?.disconnect()
+            }
         })
     }
 

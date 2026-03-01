@@ -5,7 +5,7 @@
 import ServiceManagement
 import OSLog
 
-private let logger = Logger(subsystem: "com.beam.host", category: "LoginItem")
+private let logger = Logger(subsystem: "com.beam.beacon", category: "LoginItem")
 
 final class LoginItemManager {
 

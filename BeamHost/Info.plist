@@ -6,9 +6,9 @@
 	<key>CFBundleIdentifier</key>
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleName</key>
-	<string>Beam</string>
+	<string>Beacon</string>
 	<key>CFBundleDisplayName</key>
-	<string>Beam</string>
+	<string>Beacon</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundlePackageType</key>
@@ -32,10 +32,10 @@
 
 	<!-- Permission usage descriptions -->
 	<key>NSScreenCaptureUsageDescription</key>
-	<string>Beam needs Screen Recording permission to stream your Mac's display to your iPhone.</string>
+	<string>Beacon needs Screen Recording permission to stream your Mac's display to your iPhone.</string>
 
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Beam uses your local network to stream your screen to paired iPhone devices.</string>
+	<string>Beacon uses your local network to stream your screen to paired iPhone devices.</string>
 
 	<!-- Bonjour services used -->
 	<key>NSBonjourServices</key>

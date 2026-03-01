@@ -7,70 +7,74 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		CA3A413AA71B6643B82E2090 /* BeamHostApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC8A3305A39F17004C303284 /* BeamHostApp.swift */; };
+		006BC1271BA976BAC9341DCE /* StreamSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C29E415777A934B56667281 /* StreamSession.swift */; };
+		0A36844F2F5383ED00094AA9 /* beam.icon in Resources */ = {isa = PBXBuildFile; fileRef = 0A36844E2F5383ED00094AA9 /* beam.icon */; };
+		0E353B449DC895A4638EDA62 /* CoreMedia.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 45018AE57E97782C6997BCA0 /* CoreMedia.framework */; };
+		2BC501F9F5AD3D440E6FD5DC /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 3601B9031A71A2F93370720F /* Assets.xcassets */; };
+		327FCF4592A28A2008B1F31D /* CoreImage.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = BBCAD3D612C1B8AA1BBB24DE /* CoreImage.framework */; };
+		3D114FF7D36F1E09951F2B08 /* ControlChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A6E292D2C537497C59F849 /* ControlChannel.swift */; };
 		3EE41EA4D46235B4167EE1DF /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E5D21F7318EDD34ABD76A53 /* AppState.swift */; };
-		9C11AF0126CAE9F3FAA974E0 /* LoginItemManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7076F1A63581EE3ADD5EA723 /* LoginItemManager.swift */; };
-		BCC219152533314E717C396E /* StatusItemView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17B5FA7144B935B17D134309 /* StatusItemView.swift */; };
+		4434A132FF6710CE527CDD38 /* BonjourAdvertiser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94D2C730E21206AB82749ADA /* BonjourAdvertiser.swift */; };
 		51D7D41756CEA841B063E041 /* ScreenCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1B2DB83604ED6F3F83F2353 /* ScreenCapture.swift */; };
 		59C3B6B520AEC42A64748058 /* VideoEncoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2FD95D0D3E09666CAA7C8A8F /* VideoEncoder.swift */; };
-		FC3F3C0054383A5E18B50637 /* AudioEncoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 190B047D50552AE98AC63B83 /* AudioEncoder.swift */; };
-		95B7C5156A66D1F5A6F34F12 /* Protocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0ED849CFAD1653E27680111 /* Protocol.swift */; };
-		4434A132FF6710CE527CDD38 /* BonjourAdvertiser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94D2C730E21206AB82749ADA /* BonjourAdvertiser.swift */; };
-		AB14914A15ECF1490C8B45CA /* StreamServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51426D37347E81FF12533723 /* StreamServer.swift */; };
-		006BC1271BA976BAC9341DCE /* StreamSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C29E415777A934B56667281 /* StreamSession.swift */; };
-		3D114FF7D36F1E09951F2B08 /* ControlChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A6E292D2C537497C59F849 /* ControlChannel.swift */; };
-		ABD858C7F249644F59606EDC /* PairingManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8824943B0921A89297749477 /* PairingManager.swift */; };
-		B69483C899F6864E579C821A /* PairingWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0569BE22E1100B447E39780 /* PairingWindowController.swift */; };
-		C0B2C01DC0056C5E71DD49ED /* QRCodeGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2F2C2AC81F3611F104BBE8B /* QRCodeGenerator.swift */; };
-		E00FE48B775023F63DB33E1A /* KeyStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F2993D8873CF5DF8C618B8C /* KeyStore.swift */; };
-		8139624898A349ADA4ED5613 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50F4A7F31A846ABF974B6E8E /* SettingsView.swift */; };
-		E8CA90B03F07AC61C245D06D /* DisplayPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C66AF734545AF788DD49158 /* DisplayPicker.swift */; };
-		2BC501F9F5AD3D440E6FD5DC /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 3601B9031A71A2F93370720F /* Assets.xcassets */; };
-		8A21DE4FA57AD82913AC1F03 /* ScreenCaptureKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 59F9378E8DADD6CB98646113 /* ScreenCaptureKit.framework */; };
+		61062B6FC68166DEEE0D3136 /* Network.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C3797345DBECAB19AA008F86 /* Network.framework */; };
 		6B7C700B0ECA866342D2BFD1 /* VideoToolbox.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D212A137A4045B92F23F5376 /* VideoToolbox.framework */; };
 		765AEF2CA9047266D3138BC1 /* AudioToolbox.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2DDA4825CB23D5FC2F4F6C1E /* AudioToolbox.framework */; };
-		0E353B449DC895A4638EDA62 /* CoreMedia.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 45018AE57E97782C6997BCA0 /* CoreMedia.framework */; };
-		61062B6FC68166DEEE0D3136 /* Network.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C3797345DBECAB19AA008F86 /* Network.framework */; };
+		8139624898A349ADA4ED5613 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50F4A7F31A846ABF974B6E8E /* SettingsView.swift */; };
+		8A21DE4FA57AD82913AC1F03 /* ScreenCaptureKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 59F9378E8DADD6CB98646113 /* ScreenCaptureKit.framework */; };
+		95B7C5156A66D1F5A6F34F12 /* Protocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0ED849CFAD1653E27680111 /* Protocol.swift */; };
+		9C11AF0126CAE9F3FAA974E0 /* LoginItemManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7076F1A63581EE3ADD5EA723 /* LoginItemManager.swift */; };
 		9E16FABCA7CB28FD5A76A8C7 /* AVFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AD6CBD24C7158E374A454127 /* AVFoundation.framework */; };
-		327FCF4592A28A2008B1F31D /* CoreImage.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = BBCAD3D612C1B8AA1BBB24DE /* CoreImage.framework */; };
+		AB14914A15ECF1490C8B45CA /* StreamServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51426D37347E81FF12533723 /* StreamServer.swift */; };
+		ABD858C7F249644F59606EDC /* PairingManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8824943B0921A89297749477 /* PairingManager.swift */; };
+		B69483C899F6864E579C821A /* PairingWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0569BE22E1100B447E39780 /* PairingWindowController.swift */; };
+		BCC219152533314E717C396E /* StatusItemView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17B5FA7144B935B17D134309 /* StatusItemView.swift */; };
+		C0B2C01DC0056C5E71DD49ED /* QRCodeGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2F2C2AC81F3611F104BBE8B /* QRCodeGenerator.swift */; };
+		CA3A413AA71B6643B82E2090 /* BeamHostApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC8A3305A39F17004C303284 /* BeamHostApp.swift */; };
+		D4B8E923A15F67C0498EA231 /* VideoQualityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7A3C21D98E450B6231DEA45 /* VideoQualityManager.swift */; };
+		E00FE48B775023F63DB33E1A /* KeyStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F2993D8873CF5DF8C618B8C /* KeyStore.swift */; };
+		E8CA90B03F07AC61C245D06D /* DisplayPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C66AF734545AF788DD49158 /* DisplayPicker.swift */; };
+		EA1973FF44BCE3AEEE14FC33 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4D4BFDB62F48AE420E930EB6 /* Foundation.framework */; };
 		F13186E2021F3F17E3C2AD79 /* ServiceManagement.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B8B9925E7AEEDD84380773FA /* ServiceManagement.framework */; };
 		F6F2FAE3D5588C2B35E28A86 /* AppKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2668AD2C027F954E8A9F4783 /* AppKit.framework */; };
-		EA1973FF44BCE3AEEE14FC33 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4D4BFDB62F48AE420E930EB6 /* Foundation.framework */; };
+		FC3F3C0054383A5E18B50637 /* AudioEncoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 190B047D50552AE98AC63B83 /* AudioEncoder.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		EC8A3305A39F17004C303284 /* BeamHostApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = BeamHostApp.swift; path = BeamHost/BeamHostApp.swift; sourceTree = SOURCE_ROOT; };
+		0A36844E2F5383ED00094AA9 /* beam.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = beam.icon; sourceTree = "<group>"; };
 		0E5D21F7318EDD34ABD76A53 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppState.swift; path = BeamHost/AppState.swift; sourceTree = SOURCE_ROOT; };
-		7076F1A63581EE3ADD5EA723 /* LoginItemManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LoginItemManager.swift; path = BeamHost/LoginItemManager.swift; sourceTree = SOURCE_ROOT; };
+		10E752E2A74D78C7ABB83F23 /* Beacon.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Beacon.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		17B5FA7144B935B17D134309 /* StatusItemView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = StatusItemView.swift; path = BeamHost/MenuBar/StatusItemView.swift; sourceTree = SOURCE_ROOT; };
-		C1B2DB83604ED6F3F83F2353 /* ScreenCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ScreenCapture.swift; path = BeamHost/Capture/ScreenCapture.swift; sourceTree = SOURCE_ROOT; };
-		2FD95D0D3E09666CAA7C8A8F /* VideoEncoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = VideoEncoder.swift; path = BeamHost/Capture/VideoEncoder.swift; sourceTree = SOURCE_ROOT; };
 		190B047D50552AE98AC63B83 /* AudioEncoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AudioEncoder.swift; path = BeamHost/Capture/AudioEncoder.swift; sourceTree = SOURCE_ROOT; };
-		A0ED849CFAD1653E27680111 /* Protocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = Protocol.swift; path = BeamHost/Network/Protocol.swift; sourceTree = SOURCE_ROOT; };
-		94D2C730E21206AB82749ADA /* BonjourAdvertiser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = BonjourAdvertiser.swift; path = BeamHost/Network/BonjourAdvertiser.swift; sourceTree = SOURCE_ROOT; };
-		51426D37347E81FF12533723 /* StreamServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = StreamServer.swift; path = BeamHost/Network/StreamServer.swift; sourceTree = SOURCE_ROOT; };
-		3C29E415777A934B56667281 /* StreamSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = StreamSession.swift; path = BeamHost/Network/StreamSession.swift; sourceTree = SOURCE_ROOT; };
-		51A6E292D2C537497C59F849 /* ControlChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ControlChannel.swift; path = BeamHost/Network/ControlChannel.swift; sourceTree = SOURCE_ROOT; };
-		8824943B0921A89297749477 /* PairingManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PairingManager.swift; path = BeamHost/Pairing/PairingManager.swift; sourceTree = SOURCE_ROOT; };
-		E0569BE22E1100B447E39780 /* PairingWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PairingWindowController.swift; path = BeamHost/Pairing/PairingWindowController.swift; sourceTree = SOURCE_ROOT; };
-		C2F2C2AC81F3611F104BBE8B /* QRCodeGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = QRCodeGenerator.swift; path = BeamHost/Pairing/QRCodeGenerator.swift; sourceTree = SOURCE_ROOT; };
-		3F2993D8873CF5DF8C618B8C /* KeyStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = KeyStore.swift; path = BeamHost/Pairing/KeyStore.swift; sourceTree = SOURCE_ROOT; };
-		50F4A7F31A846ABF974B6E8E /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SettingsView.swift; path = BeamHost/Settings/SettingsView.swift; sourceTree = SOURCE_ROOT; };
-		7C66AF734545AF788DD49158 /* DisplayPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = DisplayPicker.swift; path = BeamHost/Settings/DisplayPicker.swift; sourceTree = SOURCE_ROOT; };
-		E0A3DFC9E34E82C108EB0255 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; name = Info.plist; path = BeamHost/Info.plist; sourceTree = SOURCE_ROOT; };
-		5BC85343E06C5820CCA0C29A /* BeamHost.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; name = BeamHost.entitlements; path = BeamHost/BeamHost.entitlements; sourceTree = SOURCE_ROOT; };
-		3601B9031A71A2F93370720F /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Assets.xcassets; path = BeamHost/Resources/Assets.xcassets; sourceTree = SOURCE_ROOT; };
-		10E752E2A74D78C7ABB83F23 /* BeamHost.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BeamHost.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		59F9378E8DADD6CB98646113 /* ScreenCaptureKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ScreenCaptureKit.framework; path = System/Library/Frameworks/ScreenCaptureKit.framework; sourceTree = SDKROOT; };
-		D212A137A4045B92F23F5376 /* VideoToolbox.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = VideoToolbox.framework; path = System/Library/Frameworks/VideoToolbox.framework; sourceTree = SDKROOT; };
-		2DDA4825CB23D5FC2F4F6C1E /* AudioToolbox.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AudioToolbox.framework; path = System/Library/Frameworks/AudioToolbox.framework; sourceTree = SDKROOT; };
-		45018AE57E97782C6997BCA0 /* CoreMedia.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreMedia.framework; path = System/Library/Frameworks/CoreMedia.framework; sourceTree = SDKROOT; };
-		C3797345DBECAB19AA008F86 /* Network.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Network.framework; path = System/Library/Frameworks/Network.framework; sourceTree = SDKROOT; };
-		AD6CBD24C7158E374A454127 /* AVFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFoundation.framework; path = System/Library/Frameworks/AVFoundation.framework; sourceTree = SDKROOT; };
-		BBCAD3D612C1B8AA1BBB24DE /* CoreImage.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreImage.framework; path = System/Library/Frameworks/CoreImage.framework; sourceTree = SDKROOT; };
-		B8B9925E7AEEDD84380773FA /* ServiceManagement.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ServiceManagement.framework; path = System/Library/Frameworks/ServiceManagement.framework; sourceTree = SDKROOT; };
 		2668AD2C027F954E8A9F4783 /* AppKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AppKit.framework; path = System/Library/Frameworks/AppKit.framework; sourceTree = SDKROOT; };
+		2DDA4825CB23D5FC2F4F6C1E /* AudioToolbox.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AudioToolbox.framework; path = System/Library/Frameworks/AudioToolbox.framework; sourceTree = SDKROOT; };
+		2FD95D0D3E09666CAA7C8A8F /* VideoEncoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = VideoEncoder.swift; path = BeamHost/Capture/VideoEncoder.swift; sourceTree = SOURCE_ROOT; };
+		3601B9031A71A2F93370720F /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Assets.xcassets; path = BeamHost/Resources/Assets.xcassets; sourceTree = SOURCE_ROOT; };
+		3C29E415777A934B56667281 /* StreamSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = StreamSession.swift; path = BeamHost/Network/StreamSession.swift; sourceTree = SOURCE_ROOT; };
+		3F2993D8873CF5DF8C618B8C /* KeyStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = KeyStore.swift; path = BeamHost/Pairing/KeyStore.swift; sourceTree = SOURCE_ROOT; };
+		45018AE57E97782C6997BCA0 /* CoreMedia.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreMedia.framework; path = System/Library/Frameworks/CoreMedia.framework; sourceTree = SDKROOT; };
 		4D4BFDB62F48AE420E930EB6 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = System/Library/Frameworks/Foundation.framework; sourceTree = SDKROOT; };
+		50F4A7F31A846ABF974B6E8E /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SettingsView.swift; path = BeamHost/Settings/SettingsView.swift; sourceTree = SOURCE_ROOT; };
+		51426D37347E81FF12533723 /* StreamServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = StreamServer.swift; path = BeamHost/Network/StreamServer.swift; sourceTree = SOURCE_ROOT; };
+		51A6E292D2C537497C59F849 /* ControlChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ControlChannel.swift; path = BeamHost/Network/ControlChannel.swift; sourceTree = SOURCE_ROOT; };
+		59F9378E8DADD6CB98646113 /* ScreenCaptureKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ScreenCaptureKit.framework; path = System/Library/Frameworks/ScreenCaptureKit.framework; sourceTree = SDKROOT; };
+		5BC85343E06C5820CCA0C29A /* BeamHost.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; name = BeamHost.entitlements; path = BeamHost/BeamHost.entitlements; sourceTree = SOURCE_ROOT; };
+		7076F1A63581EE3ADD5EA723 /* LoginItemManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LoginItemManager.swift; path = BeamHost/LoginItemManager.swift; sourceTree = SOURCE_ROOT; };
+		7C66AF734545AF788DD49158 /* DisplayPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = DisplayPicker.swift; path = BeamHost/Settings/DisplayPicker.swift; sourceTree = SOURCE_ROOT; };
+		8824943B0921A89297749477 /* PairingManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PairingManager.swift; path = BeamHost/Pairing/PairingManager.swift; sourceTree = SOURCE_ROOT; };
+		94D2C730E21206AB82749ADA /* BonjourAdvertiser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = BonjourAdvertiser.swift; path = BeamHost/Network/BonjourAdvertiser.swift; sourceTree = SOURCE_ROOT; };
+		A0ED849CFAD1653E27680111 /* Protocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = Protocol.swift; path = BeamHost/Network/Protocol.swift; sourceTree = SOURCE_ROOT; };
+		AD6CBD24C7158E374A454127 /* AVFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFoundation.framework; path = System/Library/Frameworks/AVFoundation.framework; sourceTree = SDKROOT; };
+		B8B9925E7AEEDD84380773FA /* ServiceManagement.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ServiceManagement.framework; path = System/Library/Frameworks/ServiceManagement.framework; sourceTree = SDKROOT; };
+		BBCAD3D612C1B8AA1BBB24DE /* CoreImage.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreImage.framework; path = System/Library/Frameworks/CoreImage.framework; sourceTree = SDKROOT; };
+		C1B2DB83604ED6F3F83F2353 /* ScreenCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ScreenCapture.swift; path = BeamHost/Capture/ScreenCapture.swift; sourceTree = SOURCE_ROOT; };
+		C2F2C2AC81F3611F104BBE8B /* QRCodeGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = QRCodeGenerator.swift; path = BeamHost/Pairing/QRCodeGenerator.swift; sourceTree = SOURCE_ROOT; };
+		C3797345DBECAB19AA008F86 /* Network.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Network.framework; path = System/Library/Frameworks/Network.framework; sourceTree = SDKROOT; };
+		D212A137A4045B92F23F5376 /* VideoToolbox.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = VideoToolbox.framework; path = System/Library/Frameworks/VideoToolbox.framework; sourceTree = SDKROOT; };
+		E0569BE22E1100B447E39780 /* PairingWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PairingWindowController.swift; path = BeamHost/Pairing/PairingWindowController.swift; sourceTree = SOURCE_ROOT; };
+		E0A3DFC9E34E82C108EB0255 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; name = Info.plist; path = BeamHost/Info.plist; sourceTree = SOURCE_ROOT; };
+		EC8A3305A39F17004C303284 /* BeamHostApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = BeamHostApp.swift; path = BeamHost/BeamHostApp.swift; sourceTree = SOURCE_ROOT; };
+		F7A3C21D98E450B6231DEA45 /* VideoQualityManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = VideoQualityManager.swift; path = BeamHost/Capture/VideoQualityManager.swift; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -94,21 +98,12 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		4DA0A8DE1EFB2F9819717002 = {
+		0757391C49AC6FE33FFE5834 /* MenuBar */ = {
 			isa = PBXGroup;
 			children = (
-				A74DB112147398E0053E87DD /* BeamHost */,
-				0F7A277359BBE57F60D0BC53 /* Frameworks */,
-				C98B3694938988B0DD774224 /* Products */,
+				17B5FA7144B935B17D134309 /* StatusItemView.swift */,
 			);
-			sourceTree = "<group>";
-		};
-		C98B3694938988B0DD774224 /* Products */ = {
-			isa = PBXGroup;
-			children = (
-				10E752E2A74D78C7ABB83F23 /* BeamHost.app */,
-			);
-			name = Products;
+			name = MenuBar;
 			sourceTree = "<group>";
 		};
 		0F7A277359BBE57F60D0BC53 /* Frameworks */ = {
@@ -128,6 +123,58 @@
 			name = Frameworks;
 			sourceTree = "<group>";
 		};
+		2119FA25CC80334374842016 /* Pairing */ = {
+			isa = PBXGroup;
+			children = (
+				8824943B0921A89297749477 /* PairingManager.swift */,
+				E0569BE22E1100B447E39780 /* PairingWindowController.swift */,
+				C2F2C2AC81F3611F104BBE8B /* QRCodeGenerator.swift */,
+				3F2993D8873CF5DF8C618B8C /* KeyStore.swift */,
+			);
+			name = Pairing;
+			sourceTree = "<group>";
+		};
+		326A04214703AF4B6F35D7B0 /* Capture */ = {
+			isa = PBXGroup;
+			children = (
+				C1B2DB83604ED6F3F83F2353 /* ScreenCapture.swift */,
+				2FD95D0D3E09666CAA7C8A8F /* VideoEncoder.swift */,
+				190B047D50552AE98AC63B83 /* AudioEncoder.swift */,
+				F7A3C21D98E450B6231DEA45 /* VideoQualityManager.swift */,
+			);
+			name = Capture;
+			sourceTree = "<group>";
+		};
+		45B877375D6D6297BAAF2860 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				3601B9031A71A2F93370720F /* Assets.xcassets */,
+			);
+			name = Resources;
+			sourceTree = "<group>";
+		};
+		4DA0A8DE1EFB2F9819717002 = {
+			isa = PBXGroup;
+			children = (
+				A74DB112147398E0053E87DD /* BeamHost */,
+				0F7A277359BBE57F60D0BC53 /* Frameworks */,
+				C98B3694938988B0DD774224 /* Products */,
+				0A36844E2F5383ED00094AA9 /* beam.icon */,
+			);
+			sourceTree = "<group>";
+		};
+		9B5A5897291E81FC14FEC2FE /* Network */ = {
+			isa = PBXGroup;
+			children = (
+				A0ED849CFAD1653E27680111 /* Protocol.swift */,
+				94D2C730E21206AB82749ADA /* BonjourAdvertiser.swift */,
+				51426D37347E81FF12533723 /* StreamServer.swift */,
+				3C29E415777A934B56667281 /* StreamSession.swift */,
+				51A6E292D2C537497C59F849 /* ControlChannel.swift */,
+			);
+			name = Network;
+			sourceTree = "<group>";
+		};
 		A74DB112147398E0053E87DD /* BeamHost */ = {
 			isa = PBXGroup;
 			children = (
@@ -143,49 +190,15 @@
 				E0A3DFC9E34E82C108EB0255 /* Info.plist */,
 				5BC85343E06C5820CCA0C29A /* BeamHost.entitlements */,
 			);
-			name = BeamHost;
 			path = BeamHost;
 			sourceTree = SOURCE_ROOT;
 		};
-		0757391C49AC6FE33FFE5834 /* MenuBar */ = {
+		C98B3694938988B0DD774224 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				17B5FA7144B935B17D134309 /* StatusItemView.swift */,
+				10E752E2A74D78C7ABB83F23 /* Beacon.app */,
 			);
-			name = MenuBar;
-			sourceTree = "<group>";
-		};
-		326A04214703AF4B6F35D7B0 /* Capture */ = {
-			isa = PBXGroup;
-			children = (
-				C1B2DB83604ED6F3F83F2353 /* ScreenCapture.swift */,
-				2FD95D0D3E09666CAA7C8A8F /* VideoEncoder.swift */,
-				190B047D50552AE98AC63B83 /* AudioEncoder.swift */,
-			);
-			name = Capture;
-			sourceTree = "<group>";
-		};
-		9B5A5897291E81FC14FEC2FE /* Network */ = {
-			isa = PBXGroup;
-			children = (
-				A0ED849CFAD1653E27680111 /* Protocol.swift */,
-				94D2C730E21206AB82749ADA /* BonjourAdvertiser.swift */,
-				51426D37347E81FF12533723 /* StreamServer.swift */,
-				3C29E415777A934B56667281 /* StreamSession.swift */,
-				51A6E292D2C537497C59F849 /* ControlChannel.swift */,
-			);
-			name = Network;
-			sourceTree = "<group>";
-		};
-		2119FA25CC80334374842016 /* Pairing */ = {
-			isa = PBXGroup;
-			children = (
-				8824943B0921A89297749477 /* PairingManager.swift */,
-				E0569BE22E1100B447E39780 /* PairingWindowController.swift */,
-				C2F2C2AC81F3611F104BBE8B /* QRCodeGenerator.swift */,
-				3F2993D8873CF5DF8C618B8C /* KeyStore.swift */,
-			);
-			name = Pairing;
+			name = Products;
 			sourceTree = "<group>";
 		};
 		F463FD195E910129A74FD8C7 /* Settings */ = {
@@ -195,14 +208,6 @@
 				7C66AF734545AF788DD49158 /* DisplayPicker.swift */,
 			);
 			name = Settings;
-			sourceTree = "<group>";
-		};
-		45B877375D6D6297BAAF2860 /* Resources */ = {
-			isa = PBXGroup;
-			children = (
-				3601B9031A71A2F93370720F /* Assets.xcassets */,
-			);
-			name = Resources;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -224,7 +229,7 @@
 			packageProductDependencies = (
 			);
 			productName = BeamHost;
-			productReference = 10E752E2A74D78C7ABB83F23 /* BeamHost.app */;
+			productReference = 10E752E2A74D78C7ABB83F23 /* Beacon.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -266,6 +271,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				2BC501F9F5AD3D440E6FD5DC /* Assets.xcassets in Resources */,
+				0A36844F2F5383ED00094AA9 /* beam.icon in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -283,6 +289,7 @@
 				51D7D41756CEA841B063E041 /* ScreenCapture.swift in Sources */,
 				59C3B6B520AEC42A64748058 /* VideoEncoder.swift in Sources */,
 				FC3F3C0054383A5E18B50637 /* AudioEncoder.swift in Sources */,
+				D4B8E923A15F67C0498EA231 /* VideoQualityManager.swift in Sources */,
 				95B7C5156A66D1F5A6F34F12 /* Protocol.swift in Sources */,
 				4434A132FF6710CE527CDD38 /* BonjourAdvertiser.swift in Sources */,
 				AB14914A15ECF1490C8B45CA /* StreamServer.swift in Sources */,
@@ -300,6 +307,80 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
+		3AA98F0B7F3E69226C72B92C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = beam;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
+				ASSTCALALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSTCALALOG_COMPILER_GENERATE_ASSET_SYMBOLS = NO;
+				CODE_SIGN_ENTITLEMENTS = BeamHost/BeamHost.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = R4KDRC8S4D;
+				INFOPLIST_FILE = BeamHost/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Beacon;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				LE_TEXT_BASE_ADDRESS = 0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0.4;
+				PRODUCT_BUNDLE_IDENTIFIER = com.beam.beacon;
+				PRODUCT_NAME = Beacon;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		A72371A0DDB2780FF3DD5245 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		A747951E9A991EC6FF2AA5F0 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = beam;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
+				ASSTCALALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSTCALALOG_COMPILER_GENERATE_ASSET_SYMBOLS = NO;
+				CODE_SIGN_ENTITLEMENTS = BeamHost/BeamHost.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = R4KDRC8S4D;
+				INFOPLIST_FILE = BeamHost/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Beacon;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				LE_TEXT_BASE_ADDRESS = 0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0.4;
+				PRODUCT_BUNDLE_IDENTIFIER = com.beam.beacon;
+				PRODUCT_NAME = Beacon;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
 		ED148673586BCCF625FD4D6D /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -329,78 +410,9 @@
 			};
 			name = Debug;
 		};
-		A72371A0DDB2780FF3DD5245 /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				ALWAYS_SEARCH_USER_PATHS = NO;
-				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
-				CLANG_ENABLE_MODULES = YES;
-				CLANG_ENABLE_OBJC_ARC = YES;
-				COPY_PHASE_STRIP = NO;
-				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				ENABLE_NS_ASSERTIONS = NO;
-				ENABLE_STRICT_OBJC_MSGSEND = YES;
-				GCC_C_LANGUAGE_STANDARD = gnu17;
-				GCC_NO_COMMON_BLOCKS = YES;
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MTL_FAST_MATH = YES;
-				SDKROOT = macosx;
-				SWIFT_COMPILATION_MODE = wholemodule;
-				SWIFT_OPTIMIZATION_LEVEL = "-O";
-				VALIDATE_PRODUCT = YES;
-			};
-			name = Release;
-		};
-		A747951E9A991EC6FF2AA5F0 /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				ASSTCALALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_ENTITLEMENTS = BeamHost/BeamHost.entitlements;
-				CODE_SIGN_STYLE = Automatic;
-				COMBINE_HIDPI_IMAGES = YES;
-				DEAD_CODE_STRIPPING = YES;
-				INFOPLIST_FILE = BeamHost/Info.plist;
-				LE_TEXT_BASE_ADDRESS = 0;
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.beam.host";
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_VERSION = 5.0;
-				ASSTCALALOG_COMPILER_GENERATE_ASSET_SYMBOLS = NO;
-			};
-			name = Debug;
-		};
-		3AA98F0B7F3E69226C72B92C /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				ASSTCALALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_ENTITLEMENTS = BeamHost/BeamHost.entitlements;
-				CODE_SIGN_STYLE = Automatic;
-				COMBINE_HIDPI_IMAGES = YES;
-				DEAD_CODE_STRIPPING = YES;
-				INFOPLIST_FILE = BeamHost/Info.plist;
-				LE_TEXT_BASE_ADDRESS = 0;
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.beam.host";
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_VERSION = 5.0;
-				ASSTCALALOG_COMPILER_GENERATE_ASSET_SYMBOLS = NO;
-			};
-			name = Release;
-		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		AB3D628F665E91CDB7EFFD42 /* Build configuration list for PBXProject "BeamHost" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				ED148673586BCCF625FD4D6D /* Debug */,
-				A72371A0DDB2780FF3DD5245 /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
 		40A10EFFF39D98BF95B007BB /* Build configuration list for PBXNativeTarget "BeamHost" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -410,8 +422,16 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		AB3D628F665E91CDB7EFFD42 /* Build configuration list for PBXProject "BeamHost" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				ED148673586BCCF625FD4D6D /* Debug */,
+				A72371A0DDB2780FF3DD5245 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 /* End XCConfigurationList section */
-
 	};
 	rootObject = 0AAB7C5C6A08A83AE09AE194 /* Project object */;
 }

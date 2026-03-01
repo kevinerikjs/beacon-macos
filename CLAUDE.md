@@ -1,7 +1,7 @@
 # Beam macOS Host App
 
 ## Overview
-Menu bar app that captures the Mac's screen + system audio and streams it to a paired iPhone over the local network.
+Beacon — menu bar app that captures the Mac's screen + system audio and streams it to a paired iPhone over the local network.
 
 ## Key References
 - **PRD:** `../PRD.md` (source of truth for all requirements)
@@ -72,15 +72,15 @@ beam-macos/
   - `xcodebuild -project BeamHost.xcodeproj -scheme BeamHost -configuration Release -destination 'platform=macOS' build`
 - **Locate built app path from Xcode settings:**
   - `xcodebuild -project BeamHost.xcodeproj -scheme BeamHost -configuration Release -showBuildSettings | rg "TARGET_BUILD_DIR =|FULL_PRODUCT_NAME ="`
-  - Current product name is `Beam.app` (not `BeamHost.app`).
+  - Current product name is `Beacon.app` (not `BeamHost.app`).
 - **Create DMG locally (manual path):**
-  - `create-dmg --volname "Beam vX.Y.Z" --window-size 540 380 --icon-size 128 --icon "Beam.app" 140 190 --app-drop-link 400 190 --volicon /path/to/BeamVolume.icns --no-internet-enable /path/Beam-vX.Y.Z.dmg /path/to/Beam.app`
-  - Build `BeamVolume.icns` from `beam.icon/Assets/full-icon.png` via `sips` + `iconutil` if needed.
+  - `create-dmg --volname "Beacon vX.Y.Z" --window-size 540 380 --icon-size 128 --icon "Beacon.app" 140 190 --app-drop-link 400 190 --volicon /path/to/BeaconVolume.icns --no-internet-enable /path/Beacon-vX.Y.Z.dmg /path/to/Beacon.app`
+  - Build `BeaconVolume.icns` from `beam.icon/Assets/full-icon.png` via `sips` + `iconutil` if needed.
 - **Publish release asset to public repo:**
-  - `gh release create vX.Y.Z --repo flowtheci/beam-releases --title "Beam vX.Y.Z" --notes-file /path/release-notes.md "/path/Beam-vX.Y.Z.dmg#Beam.dmg"`
-  - Keep stable asset name `Beam.dmg` so `latest/download/Beam.dmg` links remain valid.
+  - `gh release create vX.Y.Z --repo flowtheci/beam-releases --title "Beacon vX.Y.Z" --notes-file /path/release-notes.md "/path/Beacon-vX.Y.Z.dmg#Beacon.dmg"`
+  - Keep stable asset name `Beacon.dmg` so `latest/download/Beacon.dmg` links remain valid.
 - **Web download links (beam-web):**
-  - Keep macOS download URL pointed to `https://github.com/flowtheci/beam-releases/releases/latest/download/Beam.dmg`
+  - Keep macOS download URL pointed to `https://github.com/flowtheci/beam-releases/releases/latest/download/Beacon.dmg`
   - Files that must stay aligned:
     - `beam-web/src/components/Hero.tsx`
     - `beam-web/src/components/Download.tsx`

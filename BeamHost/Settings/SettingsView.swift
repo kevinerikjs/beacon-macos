@@ -1,5 +1,5 @@
 // SettingsView.swift
-// Preferences window for Beam Host.
+// Preferences window for Beacon.
 
 import SwiftUI
 import ScreenCaptureKit
@@ -37,7 +37,7 @@ struct GeneralSettingsTab: View {
 
         Form {
             Section("Behavior") {
-                Toggle("Launch Beam at login", isOn: $state.launchAtLogin)
+                Toggle("Launch Beacon at login", isOn: $state.launchAtLogin)
             }
 
             Section("About") {
@@ -115,15 +115,26 @@ struct DisplaySettingsTab: View {
             }
 
             Section("Quality") {
-                HStack {
-                    Text("Preset")
-                    Spacer()
-                    Text("Auto (1080p @ 30fps, 6Mbps)")
+                Picker("Default Preset", selection: Binding(
+                    get: { appState.qualityManager.preferredPreset },
+                    set: { appState.qualityManager.preferredPreset = $0 }
+                )) {
+                    ForEach(StreamQualityPreset.allCases) { preset in
+                        Text(preset.displayName).tag(preset)
+                    }
+                }
+                .pickerStyle(.menu)
+
+                if appState.qualityManager.preferredPreset == .auto {
+                    Text("Auto adjusts resolution and frame rate based on connection quality reported by the iOS app.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    let p = appState.qualityManager.preferredPreset
+                    Text("\(p.width)×\(p.height) · \(Int(p.fps)) fps · \(String(format: "%.1f", p.bitrateMbps)) Mbps")
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                Text("Quality presets coming in v2")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
             }
         }
         .formStyle(.grouped)
