@@ -67,7 +67,7 @@ beam-macos/
 
 ## Release Deployment (Public DMG Repo)
 
-Source code lives in `flowtheci/beam-macos` (private). Installer DMGs are published to `flowtheci/beam-releases` (public).
+Source code lives in `flowtheci/beam-macos` (private). Installer DMGs are published to `flowtheci/beacon-releases` (public).
 
 ### Full release process (run from `beam-macos/` repo root)
 
@@ -104,7 +104,7 @@ create-dmg --volname "Beacon" --window-size 540 380 --icon-size 128 \
 
 **4. Publish to releases repo**
 ```
-gh release create vX.Y.Z --repo flowtheci/beam-releases --title "Beacon vX.Y.Z" --notes "..." "/tmp/Beacon.dmg#Beacon.dmg"
+gh release create vX.Y.Z --repo flowtheci/beacon-releases --title "Beacon vX.Y.Z" --notes "..." "/tmp/Beacon.dmg#Beacon.dmg"
 ```
 Asset name is always `Beacon.dmg` so the stable `/releases/latest/download/Beacon.dmg` URL never changes.
 
@@ -115,7 +115,7 @@ git tag vX.Y.Z && git push origin vX.Y.Z
 This marks exactly which source code corresponds to each public release.
 
 ### Web download links (beam-web)
-Stable URL: `https://github.com/flowtheci/beam-releases/releases/latest/download/Beacon.dmg`
+Stable URL: `https://github.com/flowtheci/beacon-releases/releases/latest/download/Beacon.dmg`
 Files that reference this constant (keep aligned):
 - `beam-web/src/components/Hero.tsx` — `MACOS_DOWNLOAD_URL`
 - `beam-web/src/components/Download.tsx` — `MACOS_DOWNLOAD_URL`
