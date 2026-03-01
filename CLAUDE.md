@@ -67,21 +67,55 @@ beam-macos/
 
 ## Release Deployment (Public DMG Repo)
 
-- **Source vs releases split:** keep source code in `flowtheci/beam-macos` (can be private), publish installer assets in public `flowtheci/beam-releases`.
-- **Build host app (Release):**
-  - `xcodebuild -project BeamHost.xcodeproj -scheme BeamHost -configuration Release -destination 'platform=macOS' build`
-- **Locate built app path from Xcode settings:**
-  - `xcodebuild -project BeamHost.xcodeproj -scheme BeamHost -configuration Release -showBuildSettings | rg "TARGET_BUILD_DIR =|FULL_PRODUCT_NAME ="`
-  - Current product name is `Beacon.app` (not `BeamHost.app`).
-- **Create DMG locally (manual path):**
-  - `create-dmg --volname "Beacon vX.Y.Z" --window-size 540 380 --icon-size 128 --icon "Beacon.app" 140 190 --app-drop-link 400 190 --volicon /path/to/BeaconVolume.icns --no-internet-enable /path/Beacon-vX.Y.Z.dmg /path/to/Beacon.app`
-  - Build `BeaconVolume.icns` from `beam.icon/Assets/full-icon.png` via `sips` + `iconutil` if needed.
-- **Publish release asset to public repo:**
-  - `gh release create vX.Y.Z --repo flowtheci/beam-releases --title "Beacon vX.Y.Z" --notes-file /path/release-notes.md "/path/Beacon-vX.Y.Z.dmg#Beacon.dmg"`
-  - Keep stable asset name `Beacon.dmg` so `latest/download/Beacon.dmg` links remain valid.
-- **Web download links (beam-web):**
-  - Keep macOS download URL pointed to `https://github.com/flowtheci/beam-releases/releases/latest/download/Beacon.dmg`
-  - Files that must stay aligned:
-    - `beam-web/src/components/Hero.tsx`
-    - `beam-web/src/components/Download.tsx`
-  - If release repo owner/name changes, update those constants and `beam-web` latest-release API fetch repo path.
+Source code lives in `flowtheci/beam-macos` (private). Installer DMGs are published to `flowtheci/beam-releases` (public).
+
+### Full release process (run from `beam-macos/` repo root)
+
+**1. Build Release app**
+```
+xcodebuild -project BeamHost.xcodeproj -scheme BeamHost -configuration Release -destination 'platform=macOS' build
+```
+Locate built app:
+```
+xcodebuild -project BeamHost.xcodeproj -scheme BeamHost -configuration Release -showBuildSettings 2>/dev/null | grep -E "TARGET_BUILD_DIR |FULL_PRODUCT_NAME "
+```
+Current product name is `Beacon.app`.
+
+**2. Build volume icon (if beam.icon/Assets/full-icon.png changed)**
+```bash
+ICONSET=/tmp/Beacon.iconset; mkdir -p $ICONSET; ICON=beam.icon/Assets/full-icon.png
+for s in 16 32 128 256 512; do sips -z $s $s $ICON --out $ICONSET/icon_${s}x${s}.png; done
+sips -z 32 32   $ICON --out $ICONSET/icon_16x16@2x.png
+sips -z 64 64   $ICON --out $ICONSET/icon_32x32@2x.png
+sips -z 256 256 $ICON --out $ICONSET/icon_128x128@2x.png
+sips -z 512 512 $ICON --out $ICONSET/icon_256x256@2x.png
+cp $ICON $ICONSET/icon_512x512@2x.png
+iconutil -c icns $ICONSET -o /tmp/BeaconVolume.icns
+```
+
+**3. Create DMG** (asset name is always `Beacon.dmg` — version goes in release title only)
+```bash
+APP=<TARGET_BUILD_DIR>/Beacon.app
+create-dmg --volname "Beacon" --window-size 540 380 --icon-size 128 \
+  --icon "Beacon.app" 140 190 --app-drop-link 400 190 \
+  --volicon /tmp/BeaconVolume.icns --no-internet-enable \
+  /tmp/Beacon.dmg "$APP"
+```
+
+**4. Publish to releases repo**
+```
+gh release create vX.Y.Z --repo flowtheci/beam-releases --title "Beacon vX.Y.Z" --notes "..." "/tmp/Beacon.dmg#Beacon.dmg"
+```
+Asset name is always `Beacon.dmg` so the stable `/releases/latest/download/Beacon.dmg` URL never changes.
+
+**5. Tag the source commit** — tag the last commit in `beam-macos` that was part of the deployed build:
+```
+git tag vX.Y.Z && git push origin vX.Y.Z
+```
+This marks exactly which source code corresponds to each public release.
+
+### Web download links (beam-web)
+Stable URL: `https://github.com/flowtheci/beam-releases/releases/latest/download/Beacon.dmg`
+Files that reference this constant (keep aligned):
+- `beam-web/src/components/Hero.tsx` — `MACOS_DOWNLOAD_URL`
+- `beam-web/src/components/Download.tsx` — `MACOS_DOWNLOAD_URL`
