@@ -69,17 +69,29 @@ beam-macos/
 
 Source code lives in `flowtheci/beam-macos` (private). Installer DMGs are published to `flowtheci/beacon-releases` (public).
 
+### Prerequisites
+- **Developer ID Application** cert in keychain: `Developer ID Application: KEVIN ERIK IIN (R4KDRC8S4D)`
+  - If missing: Xcode → Settings → Accounts → Manage Certificates → + → Developer ID Application
+- **App Store Connect API key** at `~/Downloads/AuthKey_REDACTED_ASC_KEY_ID.p8`
+  - Key ID: `REDACTED_ASC_KEY_ID`, Issuer ID: `REDACTED_ASC_ISSUER_ID`
+
 ### Full release process (run from `beam-macos/` repo root)
 
-**1. Build Release app**
+**1. Archive Release app** (hardened runtime + secure timestamp required for notarization)
+```bash
+xcodebuild archive \
+  -project BeamHost.xcodeproj \
+  -scheme BeamHost \
+  -configuration Release \
+  -archivePath /tmp/Beacon.xcarchive \
+  CODE_SIGN_IDENTITY="Developer ID Application: KEVIN ERIK IIN (R4KDRC8S4D)" \
+  CODE_SIGN_STYLE=Manual \
+  DEVELOPMENT_TEAM=R4KDRC8S4D \
+  ENABLE_HARDENED_RUNTIME=YES \
+  CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO \
+  "OTHER_CODE_SIGN_FLAGS=--timestamp"
 ```
-xcodebuild -project BeamHost.xcodeproj -scheme BeamHost -configuration Release -destination 'platform=macOS' build
-```
-Locate built app:
-```
-xcodebuild -project BeamHost.xcodeproj -scheme BeamHost -configuration Release -showBuildSettings 2>/dev/null | grep -E "TARGET_BUILD_DIR |FULL_PRODUCT_NAME "
-```
-Current product name is `Beacon.app`.
+App is at: `/tmp/Beacon.xcarchive/Products/Applications/Beacon.app`
 
 **2. Build volume icon (if beam.icon/Assets/full-icon.png changed)**
 ```bash
@@ -95,21 +107,36 @@ iconutil -c icns $ICONSET -o /tmp/BeaconVolume.icns
 
 **3. Create DMG** (asset name is always `Beacon.dmg` — version goes in release title only)
 ```bash
-APP=<TARGET_BUILD_DIR>/Beacon.app
+APP="/tmp/Beacon.xcarchive/Products/Applications/Beacon.app"
 create-dmg --volname "Beacon" --window-size 540 380 --icon-size 128 \
   --icon "Beacon.app" 140 190 --app-drop-link 400 190 \
   --volicon /tmp/BeaconVolume.icns --no-internet-enable \
   /tmp/Beacon.dmg "$APP"
 ```
 
-**4. Publish to releases repo**
+**4. Notarize the DMG**
+```bash
+xcrun notarytool submit /tmp/Beacon.dmg \
+  --key ~/Downloads/AuthKey_REDACTED_ASC_KEY_ID.p8 \
+  --key-id REDACTED_ASC_KEY_ID \
+  --issuer REDACTED_ASC_ISSUER_ID \
+  --wait
 ```
+Must say `status: Accepted`. If `Invalid`, run `xcrun notarytool log <submission-id> --key ...` to see errors.
+
+**5. Staple the notarization ticket**
+```bash
+xcrun stapler staple /tmp/Beacon.dmg
+```
+
+**6. Publish to releases repo**
+```bash
 gh release create vX.Y.Z --repo flowtheci/beacon-releases --title "Beacon vX.Y.Z" --notes "..." "/tmp/Beacon.dmg#Beacon.dmg"
 ```
 Asset name is always `Beacon.dmg` so the stable `/releases/latest/download/Beacon.dmg` URL never changes.
 
-**5. Tag the source commit** — tag the last commit in `beam-macos` that was part of the deployed build:
-```
+**7. Tag the source commit** — tag the last commit in `beam-macos` that was part of the deployed build:
+```bash
 git tag vX.Y.Z && git push origin vX.Y.Z
 ```
 This marks exactly which source code corresponds to each public release.
