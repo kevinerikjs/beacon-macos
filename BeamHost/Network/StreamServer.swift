@@ -35,7 +35,6 @@ final class StreamServer {
     private var lastVideoInputFrameAt: Date = .distantPast
     private var isRecoveringCapture = false
     private var pendingWindowSelection: SCWindow? = nil
-    private var pendingLockedViewportRect: CGRect? = nil
     private var currentAudioFormat: (sampleRate: Double, channels: Int)? = nil
 
     /// Tracks when each device last disconnected so we can detect same-device reconnects
@@ -278,29 +277,6 @@ final class StreamServer {
         qualityManager.handleQualityRequest(preset)
     }
 
-    func handleViewportLockRequest(_ payload: BeamViewportLockPayload) {
-        if payload.locked {
-            pendingLockedViewportRect = CGRect(x: payload.x, y: payload.y, width: payload.width, height: payload.height)
-        } else {
-            pendingLockedViewportRect = nil
-        }
-
-        guard captureStarted else {
-            logger.info("Stored viewport lock request for next capture start: \(payload.locked)")
-            return
-        }
-
-        Task {
-            if payload.locked {
-                let rect = CGRect(x: payload.x, y: payload.y, width: payload.width, height: payload.height)
-                try? await screenCapture.setLockedViewport(rect)
-            } else {
-                try? await screenCapture.setLockedViewport(nil)
-            }
-            videoEncoder.requestKeyframe()
-        }
-    }
-
     func broadcastQualityChanged(_ preset: StreamQualityPreset) {
         let sessions = sessionsQueue.sync { Array(activeSessions.values) }
         sessions.forEach { $0.sendQualityChanged(preset) }
@@ -341,7 +317,7 @@ final class StreamServer {
                 height: preset.height,
                 frameRate: preset.fps,
                 initialWindow: resolvedPendingWindow,
-                initialLockedViewport: pendingLockedViewportRect
+                initialLockedViewport: nil
             )
             try videoEncoder.start()
             try audioEncoder.start()
@@ -429,9 +405,6 @@ final class StreamServer {
         do {
             try await screenCapture.startWindowMode(window: targetWindow)
             pendingWindowSelection = targetWindow
-            if let pendingLockedViewportRect {
-                try? await screenCapture.setLockedViewport(pendingLockedViewportRect)
-            }
             videoEncoder.requestKeyframe()
             logger.info("Switched to window mode: \(targetWindow.title ?? "unknown")")
         } catch {
@@ -445,11 +418,6 @@ final class StreamServer {
               let display = await MainActor.run(body: { appState?.selectedDisplay }) else { return }
         do {
             try await screenCapture.stopWindowMode(display: display)
-            if let pendingLockedViewportRect {
-                try? await screenCapture.setLockedViewport(pendingLockedViewportRect)
-            } else {
-                try? await screenCapture.setLockedViewport(nil)
-            }
             videoEncoder.requestKeyframe()
             logger.info("Returned to full display mode")
         } catch {
