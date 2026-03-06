@@ -27,10 +27,6 @@ final class StreamSession {
     private(set) var authenticatedDeviceID: String?
     private var isTerminated = false
 
-    /// Per-session viewport lock rect (normalized 0-1 in video frame space).
-    /// Applied client-side by iOS — not reflected in the shared SCStream sourceRect.
-    private(set) var viewportRect: CGRect?
-
     // Sequence tracking
     private var videoFrameNumber: UInt32 = 0
     private var audioSequenceNumber: UInt32 = 0
@@ -225,10 +221,7 @@ final class StreamSession {
             }
         case .viewportLockRequest:
             if case .viewportLock(let payload) = message.payload {
-                viewportRect = payload.locked
-                    ? CGRect(x: payload.x, y: payload.y, width: payload.width, height: payload.height)
-                    : nil
-                // Viewport is applied client-side by iOS; no SCStream crop needed here.
+                server?.handleViewportLockRequest(payload)
             }
         default:
             break
