@@ -38,6 +38,11 @@ final class StreamServer {
     private var pendingLockedViewportRect: CGRect? = nil
     private var currentAudioFormat: (sampleRate: Double, channels: Int)? = nil
 
+    /// Tracks when each device last disconnected so we can detect same-device reconnects
+    /// even when the old session has already been cleaned up (e.g. heartbeat timeout).
+    /// Protected by sessionsQueue.
+    private var lastDisconnectedByDeviceID: [String: Date] = [:]
+
     init(appState: AppState, qualityManager: VideoQualityManager) {
         self.appState = appState
         self.qualityManager = qualityManager
@@ -136,6 +141,30 @@ final class StreamServer {
         }
         duplicateSessions.forEach { $0.disconnect() }
 
+        // If a live duplicate existed, the pipeline may be associated with the dying session —
+        // reset the stale tracker so the restart check below always fires.
+        if !duplicateSessions.isEmpty {
+            lastVideoInputFrameAt = .distantPast
+        }
+
+        // Check if this device recently disconnected (handles the heartbeat-timeout path
+        // where the old session is already gone before the new one arrives).
+        let deviceID = session.authenticatedDeviceID ?? ""
+        let wasRecentlyDisconnected = sessionsQueue.sync { () -> Bool in
+            guard let t = lastDisconnectedByDeviceID[deviceID] else { return false }
+            lastDisconnectedByDeviceID.removeValue(forKey: deviceID)
+            return Date().timeIntervalSince(t) < 60
+        }
+
+        // Whether any OTHER authenticated sessions (not this one, not the duplicates we just
+        // disconnected) are currently active. If so, don't restart their pipeline.
+        let duplicateIDs = Set(duplicateSessions.map { $0.id })
+        let hasOtherSessions = sessionsQueue.sync {
+            activeSessions.values.contains {
+                $0.id != session.id && !duplicateIDs.contains($0.id) && $0.authenticatedDeviceID != nil
+            }
+        }
+
         Task { @MainActor in
             appState?.isStreaming = true
             appState?.connectedDeviceName = deviceName
@@ -149,10 +178,16 @@ final class StreamServer {
             session.sendAudioFormatChanged(sampleRate: audioFormat.sampleRate, channels: audioFormat.channels)
         }
 
-        // Start capture pipeline on first authenticated client.
-        // Also self-heal if capture is marked running but no input frames have arrived recently.
+        // Start (or restart) the capture pipeline.
+        // On a same-device reconnect with no other active sessions, always restart to ensure
+        // a clean pipeline — the stale-frame check alone misses cases where the pipeline
+        // appears running but delivers no frames (SCStream silently wedged).
         Task {
-            if captureStarted && Date().timeIntervalSince(lastVideoInputFrameAt) > 4 {
+            let isReconnect = !duplicateSessions.isEmpty || wasRecentlyDisconnected
+            if captureStarted && isReconnect && !hasOtherSessions {
+                logger.info("Same-device reconnect (\(deviceID)) — restarting capture pipeline for clean state")
+                await restartCapturePipeline()
+            } else if captureStarted && Date().timeIntervalSince(lastVideoInputFrameAt) > 4 {
                 logger.warning("Capture appears stalled; restarting pipeline before streaming session \(session.id)")
                 await restartCapturePipeline()
             } else {
@@ -174,6 +209,9 @@ final class StreamServer {
         let remaining: Int? = sessionsQueue.sync {
             guard activeSessions[session.id] != nil else { return nil }
             activeSessions.removeValue(forKey: session.id)
+            if let deviceID = session.authenticatedDeviceID {
+                lastDisconnectedByDeviceID[deviceID] = Date()
+            }
             return activeSessions.count
         }
         guard let remaining else { return }  // Already removed — nothing to do
