@@ -72,7 +72,7 @@ struct GeneralSettingsTab: View {
                             .font(.callout)
                     } else {
                         Button("Grant Accessibility…") {
-                            MediaKeyDispatcher.requestAccessibilityPermission()
+                            openPrivacySettings(privacy: "Privacy_Accessibility")
                         }
                         .buttonStyle(.link)
                     }

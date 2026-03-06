@@ -38,9 +38,10 @@ final class AppState {
     var hasCapturePermission: Bool = false
 
     /// Whether Accessibility permission has been granted (needed for media key forwarding).
-    var hasAccessibilityPermission: Bool {
-        MediaKeyDispatcher.isAccessibilityGranted
-    }
+    /// Stored (not computed) so @Observable can track changes and update the UI.
+    /// Re-checked whenever the app becomes active so the Settings view reflects
+    /// changes made in System Settings without requiring an app restart.
+    var hasAccessibilityPermission: Bool = AXIsProcessTrusted()
 
     // MARK: - Pairing
 
@@ -86,6 +87,17 @@ final class AppState {
 
         // Load paired devices from keychain
         pairedDevices = KeyStore.shared.loadPairedDevices()
+
+        // Re-check Accessibility permission whenever the app becomes active.
+        // The user grants it in System Settings and switches back — this ensures
+        // the Settings view updates immediately without needing an app restart.
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.hasAccessibilityPermission = AXIsProcessTrusted()
+        }
 
         // Start the server pipeline
         Task { await startServer() }
