@@ -36,15 +36,24 @@ enum MediaKeyDispatcher {
             return
         }
 
-        let keyCode: Int32
         switch key {
-        case .playPause:  keyCode = NX_KEYTYPE_PLAY
-        case .next:       keyCode = NX_KEYTYPE_NEXT
-        case .previous:   keyCode = NX_KEYTYPE_PREVIOUS
+        case .seekBackward:
+            logger.info("Sending key: left arrow")
+            postKeyEvent(keyCode: 123)
+        case .seekForward:
+            logger.info("Sending key: right arrow")
+            postKeyEvent(keyCode: 124)
+        default:
+            let keyCode: Int32
+            switch key {
+            case .playPause:  keyCode = NX_KEYTYPE_PLAY
+            case .next:       keyCode = NX_KEYTYPE_NEXT
+            case .previous:   keyCode = NX_KEYTYPE_PREVIOUS
+            default:          return
+            }
+            logger.info("Sending media key: \(key.rawValue)")
+            postMediaKey(keyCode: keyCode)
         }
-
-        logger.info("Sending media key: \(key.rawValue)")
-        postMediaKey(keyCode: keyCode)
     }
 
     /// Posts a CGEvent media key press+release to the system event stream.
@@ -77,5 +86,12 @@ enum MediaKeyDispatcher {
 
         keyDownEvent?.cgEvent?.post(tap: .cghidEventTap)
         keyUpEvent?.cgEvent?.post(tap: .cghidEventTap)
+    }
+
+    /// Posts a regular keyboard key press+release (for arrow keys, etc.).
+    private static func postKeyEvent(keyCode: CGKeyCode) {
+        let src = CGEventSource(stateID: .hidSystemState)
+        CGEvent(keyboardEventSource: src, virtualKey: keyCode, keyDown: true)?.post(tap: .cghidEventTap)
+        CGEvent(keyboardEventSource: src, virtualKey: keyCode, keyDown: false)?.post(tap: .cghidEventTap)
     }
 }
