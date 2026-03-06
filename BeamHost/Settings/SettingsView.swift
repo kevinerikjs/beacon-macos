@@ -4,6 +4,7 @@
 import SwiftUI
 import ScreenCaptureKit
 import ServiceManagement
+import ApplicationServices
 
 struct SettingsView: View {
     @Environment(AppState.self) private var appState
@@ -72,6 +73,11 @@ struct GeneralSettingsTab: View {
                             .font(.callout)
                     } else {
                         Button("Grant Accessibility…") {
+                            // Register Beacon in the Accessibility list (required before
+                            // it appears as a toggleable entry in System Settings).
+                            let opts = [kAXTrustedCheckOptionPrompt.takeRetainedValue() as String: false] as CFDictionary
+                            AXIsProcessTrustedWithOptions(opts)
+                            // Then navigate directly to the right pane.
                             openPrivacySettings(privacy: "Privacy_Accessibility")
                         }
                         .buttonStyle(.link)
