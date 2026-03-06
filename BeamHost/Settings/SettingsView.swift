@@ -73,12 +73,11 @@ struct GeneralSettingsTab: View {
                             .font(.callout)
                     } else {
                         Button("Grant Accessibility…") {
-                            // Register Beacon in the Accessibility list (required before
-                            // it appears as a toggleable entry in System Settings).
-                            let opts = [kAXTrustedCheckOptionPrompt.takeRetainedValue() as String: false] as CFDictionary
+                            // Show the system accessibility permission prompt.
+                            // This registers Beacon in the list and presents a
+                            // macOS alert with an "Open System Settings" button.
+                            let opts = [kAXTrustedCheckOptionPrompt.takeRetainedValue() as String: true] as CFDictionary
                             AXIsProcessTrustedWithOptions(opts)
-                            // Then navigate directly to the right pane.
-                            openPrivacySettings(privacy: "Privacy_Accessibility")
                         }
                         .buttonStyle(.link)
                     }
