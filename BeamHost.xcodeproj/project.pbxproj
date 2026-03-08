@@ -38,6 +38,7 @@
 		F13186E2021F3F17E3C2AD79 /* ServiceManagement.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B8B9925E7AEEDD84380773FA /* ServiceManagement.framework */; };
 		F6F2FAE3D5588C2B35E28A86 /* AppKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2668AD2C027F954E8A9F4783 /* AppKit.framework */; };
 		FC3F3C0054383A5E18B50637 /* AudioEncoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 190B047D50552AE98AC63B83 /* AudioEncoder.swift */; };
+		AA11BB22CC33DD44EE55FF68 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = AA11BB22CC33DD44EE55FF67 /* Sparkle */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -92,6 +93,7 @@
 				F13186E2021F3F17E3C2AD79 /* ServiceManagement.framework in Frameworks */,
 				F6F2FAE3D5588C2B35E28A86 /* AppKit.framework in Frameworks */,
 				EA1973FF44BCE3AEEE14FC33 /* Foundation.framework in Frameworks */,
+				AA11BB22CC33DD44EE55FF68 /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -227,6 +229,7 @@
 			);
 			name = BeamHost;
 			packageProductDependencies = (
+				AA11BB22CC33DD44EE55FF67 /* Sparkle */,
 			);
 			productName = BeamHost;
 			productReference = 10E752E2A74D78C7ABB83F23 /* Beacon.app */;
@@ -257,6 +260,9 @@
 			);
 			mainGroup = 4DA0A8DE1EFB2F9819717002;
 			productRefGroup = C98B3694938988B0DD774224 /* Products */;
+			packageReferences = (
+				AA11BB22CC33DD44EE55FF66 /* XCRemoteSwiftPackageReference "Sparkle" */,
+			);
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -434,6 +440,24 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+/* Begin XCRemoteSwiftPackageReference section */
+		AA11BB22CC33DD44EE55FF66 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		AA11BB22CC33DD44EE55FF67 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AA11BB22CC33DD44EE55FF66 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 0AAB7C5C6A08A83AE09AE194 /* Project object */;
 }

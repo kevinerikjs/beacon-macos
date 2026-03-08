@@ -4,16 +4,25 @@
 
 import SwiftUI
 import ScreenCaptureKit
+import Sparkle
 
 @main
 struct BeaconApp: App {
 
     @State private var appState = AppState()
 
+    /// Sparkle updater controller — owns the update check lifecycle.
+    /// Stored as a property so it lives for the duration of the app.
+    private let updaterController = SPUStandardUpdaterController(
+        startingUpdater: true,
+        updaterDelegate: nil,
+        userDriverDelegate: nil
+    )
+
     var body: some Scene {
         // Menu bar icon + dropdown
         MenuBarExtra {
-            StatusItemView()
+            StatusItemView(updater: updaterController.updater)
                 .environment(appState)
         } label: {
             MenuBarIconLabel()

@@ -40,6 +40,14 @@
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Beacon uses your local network to stream your screen to paired iPhone devices.</string>
 
+	<!-- Sparkle auto-update -->
+	<key>SUFeedURL</key>
+	<string>https://beamscreen.app/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>DSBKP9n2Vs1s39L4N+ae3VRVBAmnP7tGYQnLo4b0Ibg=</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+
 	<!-- Bonjour services used -->
 	<key>NSBonjourServices</key>
 	<array>

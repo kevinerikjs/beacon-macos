@@ -4,10 +4,13 @@
 import SwiftUI
 import ScreenCaptureKit
 import AppKit
+import Sparkle
 
 struct StatusItemView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.openSettings) private var openSettings
+
+    let updater: SPUUpdater
 
     var body: some View {
         // Status header
@@ -36,6 +39,10 @@ struct StatusItemView: View {
             NSApp.activate(ignoringOtherApps: true)
         }
         .keyboardShortcut(",", modifiers: .command)
+
+        Button("Check for Updates…") {
+            updater.checkForUpdates()
+        }
 
         Button("Quit Beacon") {
             NSApp.terminate(nil)
