@@ -38,6 +38,12 @@ final class StreamServer {
     private var pendingLockedViewportRect: CGRect? = nil
     private var currentAudioFormat: (sampleRate: Double, channels: Int)? = nil
 
+    /// Continuous watchdog that detects a wedged capture pipeline while clients are connected.
+    private var captureWatchdogTimer: DispatchSourceTimer?
+    /// How long (seconds) without a captured frame before the watchdog restarts the pipeline.
+    /// 15s avoids false positives from idle/static screens (SCK only delivers frames on content change).
+    private let captureStaleThreshold: TimeInterval = 15
+
     init(appState: AppState, qualityManager: VideoQualityManager) {
         self.appState = appState
         self.qualityManager = qualityManager
@@ -113,6 +119,7 @@ final class StreamServer {
     func stop() {
         listener?.cancel()
         listener = nil
+        stopCaptureWatchdog()
         Task { await stopCaptureForced() }
     }
 
@@ -150,14 +157,12 @@ final class StreamServer {
         }
 
         // Start capture pipeline on first authenticated client.
-        // Also self-heal if capture is marked running but no input frames have arrived recently.
+        // If already running, leave it alone — static screens legitimately produce no frames for
+        // many seconds, so frame-timing checks here cause false-positive restarts that interrupt
+        // existing sessions. True pipeline failures are handled by the screenCapture error callback
+        // and the continuous watchdog. Just request a fresh keyframe for the new client.
         Task {
-            if captureStarted && Date().timeIntervalSince(lastVideoInputFrameAt) > 4 {
-                logger.warning("Capture appears stalled; restarting pipeline before streaming session \(session.id)")
-                await restartCapturePipeline()
-            } else {
-                await startCaptureIfNeeded()
-            }
+            await startCaptureIfNeeded()
 
             // Send cached SPS/PPS so the new client can decode immediately,
             // then force an IDR so it doesn't have to wait up to 2 seconds for the next keyframe.
@@ -167,6 +172,9 @@ final class StreamServer {
             videoEncoder.requestKeyframe()
         }
         session.beginReceivingStream(videoEncoder: videoEncoder, audioEncoder: audioEncoder)
+
+        // Start the continuous capture watchdog once a client is active.
+        startCaptureWatchdog()
     }
 
     /// Called by a session when it disconnects.
@@ -180,6 +188,7 @@ final class StreamServer {
         logger.info("Session disconnected: \(session.id). Active sessions: \(remaining)")
 
         if remaining == 0 {
+            stopCaptureWatchdog()
             qualityManager.sessionEnded()
             Task {
                 // Use the guarded stop — if a client reconnected during this async gap,
@@ -206,6 +215,7 @@ final class StreamServer {
             return all
         }
         sessions.forEach { $0.disconnect() }
+        stopCaptureWatchdog()
         qualityManager.sessionEnded()
         Task { @MainActor in
             appState?.isStreaming = false
@@ -282,6 +292,52 @@ final class StreamServer {
             broadcastQualityChanged(preset)
         }
         logger.info("Applying quality preset: \(preset.rawValue)")
+    }
+
+    // MARK: - Capture Watchdog
+
+    /// Start a periodic timer that restarts the pipeline if frames stop arriving while clients are connected.
+    private func startCaptureWatchdog() {
+        // Already running — don't create a second timer.
+        guard captureWatchdogTimer == nil else { return }
+        let timer = DispatchSource.makeTimerSource(queue: sessionsQueue)
+        timer.schedule(deadline: .now() + captureStaleThreshold, repeating: captureStaleThreshold)
+        timer.setEventHandler { [weak self] in self?.checkCaptureHealth() }
+        timer.resume()
+        captureWatchdogTimer = timer
+        logger.info("Capture watchdog started")
+    }
+
+    private func stopCaptureWatchdog() {
+        captureWatchdogTimer?.cancel()
+        captureWatchdogTimer = nil
+    }
+
+    private func checkCaptureHealth() {
+        // Only act when there are live authenticated sessions and capture is supposed to be running.
+        let hasActiveSessions = !activeSessions.isEmpty
+        guard hasActiveSessions, captureStarted else { return }
+
+        let staleness = Date().timeIntervalSince(lastVideoInputFrameAt)
+        guard staleness > captureStaleThreshold else { return }
+
+        logger.warning("Capture watchdog: no frames in \(staleness, format: .fixed(precision: 1))s with \(self.activeSessions.count) active session(s) — restarting pipeline")
+        guard !isRecoveringCapture else { return }
+        isRecoveringCapture = true
+
+        Task {
+            await restartCapturePipeline()
+            isRecoveringCapture = false
+            // If clients are still connected, send a fresh keyframe immediately.
+            let stillActive = sessionsQueue.sync { !activeSessions.isEmpty }
+            if stillActive {
+                if let cached = cachedSpsPps {
+                    let sessions = sessionsQueue.sync { Array(activeSessions.values) }
+                    sessions.forEach { $0.send(spsPps: cached) }
+                }
+                videoEncoder.requestKeyframe()
+            }
+        }
     }
 
     // MARK: - Capture Pipeline
@@ -473,8 +529,23 @@ extension StreamServer: ScreenCaptureDelegate {
         guard !isRecoveringCapture else { return }
         isRecoveringCapture = true
 
+        // Disconnect sessions synchronously here rather than calling disconnectAllClients(),
+        // which launches its own unstructured Task { stopCaptureForced() } that would race
+        // with the restartCapturePipeline() call below and could kill the freshly restarted pipeline.
+        let sessions = sessionsQueue.sync { () -> [StreamSession] in
+            let all = Array(activeSessions.values)
+            activeSessions.removeAll()
+            return all
+        }
+        sessions.forEach { $0.disconnect() }
+        stopCaptureWatchdog()
+        qualityManager.sessionEnded()
+        Task { @MainActor in
+            appState?.isStreaming = false
+            appState?.connectedDeviceName = nil
+        }
+
         Task {
-            disconnectAllClients()
             await restartCapturePipeline()
             isRecoveringCapture = false
         }

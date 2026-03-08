@@ -134,14 +134,16 @@ final class ScreenCapture: NSObject {
         guard let stream else { return }
         do {
             try await stream.stopCapture()
-            self.stream = nil
-            self.currentWindow = nil
-            self.currentDisplay = nil
-            self.normalizedLockedViewport = nil
-            logger.info("Screen capture stopped")
         } catch {
             logger.error("Failed to stop capture stream: \(error)")
         }
+        // Always nil out regardless of error — a failed stop leaves the stream unusable,
+        // and keeping self.stream non-nil would block the next start() call (guard stream == nil).
+        self.stream = nil
+        self.currentWindow = nil
+        self.currentDisplay = nil
+        self.normalizedLockedViewport = nil
+        logger.info("Screen capture stopped")
     }
 
     /// Update the display being captured without restarting the full stream.
