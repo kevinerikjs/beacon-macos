@@ -37,6 +37,20 @@ struct GeneralSettingsTab: View {
         @Bindable var state = appState
 
         VStack(alignment: .leading, spacing: 16) {
+            VStack(spacing: 6) {
+                Image(nsImage: NSApplication.shared.applicationIconImage)
+                    .resizable()
+                    .frame(width: 56, height: 56)
+                Text("Beacon")
+                    .font(.title3)
+                    .fontWeight(.semibold)
+                Text(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.bottom, 2)
+
             settingsGroup(header: "Behavior") {
                 Toggle("Launch Beacon at login", isOn: $state.launchAtLogin)
                     .padding(.horizontal, 12)
@@ -44,12 +58,7 @@ struct GeneralSettingsTab: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            settingsGroup(header: "About") {
-                settingsRow("Version") {
-                    Text(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—")
-                        .foregroundStyle(.secondary)
-                }
-                Divider().padding(.leading, 12)
+            settingsGroup(header: "Permissions") {
                 settingsRow("Screen Recording") {
                     if appState.hasCapturePermission {
                         Label("Granted", systemImage: "checkmark.circle.fill")
@@ -101,20 +110,21 @@ struct DisplaySettingsTab: View {
         VStack(alignment: .leading, spacing: 16) {
             settingsGroup(header: "Streaming Display") {
                 if appState.availableDisplays.isEmpty {
-                    Text("No displays found. Grant Screen Recording permission first.")
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
-                } else {
-                    Picker("Display", selection: $state.selectedDisplayIndex) {
-                        ForEach(Array(appState.availableDisplays.enumerated()), id: \.offset) { index, display in
-                            Text(displayName(for: display, index: index))
-                                .tag(index)
-                        }
+                    settingsRow("Display") {
+                        Text("No displays found")
+                            .foregroundStyle(.secondary)
                     }
-                    .pickerStyle(.radioGroup)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
+                } else {
+                    settingsRow("Display") {
+                        Picker("", selection: $state.selectedDisplayIndex) {
+                            ForEach(Array(appState.availableDisplays.enumerated()), id: \.offset) { index, display in
+                                Text(displayName(for: display, index: index))
+                                    .tag(index)
+                            }
+                        }
+                        .pickerStyle(.radioGroup)
+                        .labelsHidden()
+                    }
                 }
             }
 
@@ -136,6 +146,7 @@ struct DisplaySettingsTab: View {
                     Text("Auto adjusts resolution and frame rate based on connection quality reported by the iOS app.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 12)
                         .padding(.bottom, 8)
                 } else {
@@ -143,6 +154,7 @@ struct DisplaySettingsTab: View {
                     Text("\(p.width)×\(p.height) · \(Int(p.fps)) fps · \(String(format: "%.1f", p.bitrateMbps)) Mbps")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 12)
                         .padding(.bottom, 8)
                 }
