@@ -34,7 +34,7 @@ struct BeaconApp: App {
         Settings {
             SettingsView()
                 .environment(appState)
-                .frame(width: 420, height: 320)
+                .frame(width: 420, height: 400)
         }
     }
 }

@@ -24,7 +24,7 @@ struct SettingsView: View {
                 .environment(appState)
         }
         .padding(20)
-        .frame(width: 420, height: 280)
+        .frame(width: 420, height: 360)
     }
 }
 
@@ -36,22 +36,21 @@ struct GeneralSettingsTab: View {
     var body: some View {
         @Bindable var state = appState
 
-        Form {
-            Section("Behavior") {
+        VStack(alignment: .leading, spacing: 16) {
+            settingsGroup(header: "Behavior") {
                 Toggle("Launch Beacon at login", isOn: $state.launchAtLogin)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            Section("About") {
-                HStack {
-                    Text("Version")
-                    Spacer()
+            settingsGroup(header: "About") {
+                settingsRow("Version") {
                     Text(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—")
                         .foregroundStyle(.secondary)
                 }
-
-                HStack {
-                    Text("Screen Recording")
-                    Spacer()
+                Divider().padding(.leading, 12)
+                settingsRow("Screen Recording") {
                     if appState.hasCapturePermission {
                         Label("Granted", systemImage: "checkmark.circle.fill")
                             .foregroundStyle(.green)
@@ -63,19 +62,14 @@ struct GeneralSettingsTab: View {
                         .buttonStyle(.link)
                     }
                 }
-
-                HStack {
-                    Text("Media Key Control")
-                    Spacer()
+                Divider().padding(.leading, 12)
+                settingsRow("Media Key Control") {
                     if appState.hasAccessibilityPermission {
                         Label("Granted", systemImage: "checkmark.circle.fill")
                             .foregroundStyle(.green)
                             .font(.callout)
                     } else {
                         Button("Grant Accessibility…") {
-                            // Show the system accessibility permission prompt.
-                            // This registers Beacon in the list and presents a
-                            // macOS alert with an "Open System Settings" button.
                             let opts = [kAXTrustedCheckOptionPrompt.takeRetainedValue() as String: true] as CFDictionary
                             AXIsProcessTrustedWithOptions(opts)
                         }
@@ -83,9 +77,10 @@ struct GeneralSettingsTab: View {
                     }
                 }
             }
+
+            Spacer()
         }
-        .formStyle(.grouped)
-        .padding(.vertical, 8)
+        .padding(.vertical, 4)
     }
 
     private func openPrivacySettings(privacy: String) {
@@ -103,11 +98,13 @@ struct DisplaySettingsTab: View {
     var body: some View {
         @Bindable var state = appState
 
-        Form {
-            Section("Streaming Display") {
+        VStack(alignment: .leading, spacing: 16) {
+            settingsGroup(header: "Streaming Display") {
                 if appState.availableDisplays.isEmpty {
                     Text("No displays found. Grant Screen Recording permission first.")
                         .foregroundStyle(.secondary)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
                 } else {
                     Picker("Display", selection: $state.selectedDisplayIndex) {
                         ForEach(Array(appState.availableDisplays.enumerated()), id: \.offset) { index, display in
@@ -116,34 +113,44 @@ struct DisplaySettingsTab: View {
                         }
                     }
                     .pickerStyle(.radioGroup)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
                 }
             }
 
-            Section("Quality") {
-                Picker("Default Preset", selection: Binding(
-                    get: { appState.qualityManager.preferredPreset },
-                    set: { appState.qualityManager.preferredPreset = $0 }
-                )) {
-                    ForEach(StreamQualityPreset.allCases) { preset in
-                        Text(preset.displayName).tag(preset)
+            settingsGroup(header: "Quality") {
+                settingsRow("Default Preset") {
+                    Picker("", selection: Binding(
+                        get: { appState.qualityManager.preferredPreset },
+                        set: { appState.qualityManager.preferredPreset = $0 }
+                    )) {
+                        ForEach(StreamQualityPreset.allCases) { preset in
+                            Text(preset.displayName).tag(preset)
+                        }
                     }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .frame(width: 140)
                 }
-                .pickerStyle(.menu)
-
                 if appState.qualityManager.preferredPreset == .auto {
                     Text("Auto adjusts resolution and frame rate based on connection quality reported by the iOS app.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 8)
                 } else {
                     let p = appState.qualityManager.preferredPreset
                     Text("\(p.width)×\(p.height) · \(Int(p.fps)) fps · \(String(format: "%.1f", p.bitrateMbps)) Mbps")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 8)
                 }
             }
+
+            Spacer()
         }
-        .formStyle(.grouped)
-        .padding(.vertical, 8)
+        .padding(.vertical, 4)
     }
 
     private func displayName(for display: SCDisplay, index: Int) -> String {
@@ -199,4 +206,44 @@ struct PairedDevicesTab: View {
         }
         .padding(.vertical, 8)
     }
+}
+
+// MARK: - Layout Helpers
+
+@ViewBuilder
+private func settingsGroup<Content: View>(
+    header: String? = nil,
+    @ViewBuilder content: () -> Content
+) -> some View {
+    VStack(alignment: .leading, spacing: 4) {
+        if let header {
+            Text(header)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.leading, 2)
+        }
+        VStack(spacing: 0) {
+            content()
+        }
+        .background(.background.secondary)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(.separator, lineWidth: 0.5)
+        )
+    }
+}
+
+@ViewBuilder
+private func settingsRow<Content: View>(
+    _ label: String,
+    @ViewBuilder content: () -> Content
+) -> some View {
+    HStack {
+        Text(label)
+        Spacer()
+        content()
+    }
+    .padding(.horizontal, 12)
+    .padding(.vertical, 10)
 }
