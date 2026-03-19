@@ -1,32 +1,35 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
   <g fill="currentColor">
-    <!-- Light Beam -->
-    <path d="M 14 6.25 L 0 1 L 0 11.5 Z" opacity="0.3" />
-    
+    <!-- Wi-Fi / Signal Arcs -->
+    <g fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round">
+      <path d="M 9.70 3.44 A 6 6 0 0 0 9.70 9.06"/>
+      <path d="M 7.05 2.03 A 9 9 0 0 0 7.05 10.47"/>
+    </g>
+
     <!-- Base Platform -->
-    <rect x="11" y="22" width="8" height="1" rx="0.5" />
+    <rect x="11" y="22" width="8" height="1" rx="0.5"/>
 
     <!-- Tower -->
-    <path fill-rule="evenodd" d="M 18 22 L 12 22 L 13 9 L 17 9 Z M 14.5 12 h 1 v 2 h -1 Z M 14.5 16 h 1 v 2 h -1 Z" />
-    
+    <path fill-rule="evenodd" d="M 18 22 L 12 22 L 13 9 L 17 9 Z M 14.5 12 h 1 v 2 h -1 Z M 14.5 16 h 1 v 2 h -1 Z"/>
+
     <!-- Gallery Deck -->
-    <rect x="11.5" y="8.5" width="7" height="0.5" />
-    <rect x="12" y="7.5" width="6" height="0.5" />
-    <rect x="12" y="8" width="0.5" height="0.5" />
-    <rect x="13.375" y="8" width="0.5" height="0.5" />
-    <rect x="14.75" y="8" width="0.5" height="0.5" />
-    <rect x="16.125" y="8" width="0.5" height="0.5" />
-    <rect x="17.5" y="8" width="0.5" height="0.5" />
-    
+    <rect x="11.5" y="8.5" width="7" height="0.5"/>
+    <rect x="12" y="7.5" width="6" height="0.5"/>
+    <rect x="12" y="8" width="0.5" height="0.5"/>
+    <rect x="13.375" y="8" width="0.5" height="0.5"/>
+    <rect x="14.75" y="8" width="0.5" height="0.5"/>
+    <rect x="16.125" y="8" width="0.5" height="0.5"/>
+    <rect x="17.5" y="8" width="0.5" height="0.5"/>
+
     <!-- Lantern Room -->
-    <path fill-rule="evenodd" d="M 13 5 h 4 v 2.5 h -4 Z M 13.2 5.2 h 0.8 v 2.1 h -0.8 Z M 14.6 5.2 h 0.8 v 2.1 h -0.8 Z M 16 5.2 h 0.8 v 2.1 h -0.8 Z" />
-    
+    <path fill-rule="evenodd" d="M 13 5 h 4 v 2.5 h -4 Z M 13.2 5.2 h 0.8 v 2.1 h -0.8 Z M 14.6 5.2 h 0.8 v 2.1 h -0.8 Z M 16 5.2 h 0.8 v 2.1 h -0.8 Z"/>
+
     <!-- Light Source -->
-    <circle cx="15" cy="6.25" r="0.6" />
-    
+    <circle cx="15" cy="6.25" r="0.6"/>
+
     <!-- Roof -->
-    <path d="M 18 5 C 18 3 15 2 15 2 C 15 2 12 3 12 5 Z" />
-    <rect x="14.8" y="1" width="0.4" height="1" />
-    <circle cx="15" cy="0.8" r="0.4" />
+    <path d="M 18 5 C 18 3 15 2 15 2 C 15 2 12 3 12 5 Z"/>
+    <rect x="14.8" y="1" width="0.4" height="1"/>
+    <circle cx="15" cy="0.8" r="0.4"/>
   </g>
 </svg>
