@@ -39,6 +39,8 @@
 		F6F2FAE3D5588C2B35E28A86 /* AppKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2668AD2C027F954E8A9F4783 /* AppKit.framework */; };
 		FC3F3C0054383A5E18B50637 /* AudioEncoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 190B047D50552AE98AC63B83 /* AudioEncoder.swift */; };
 		AA11BB22CC33DD44EE55FF68 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = AA11BB22CC33DD44EE55FF67 /* Sparkle */; };
+		BB00CC11DD22EE33FF44AA12 /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB00CC11DD22EE33FF44AA11 /* OnboardingView.swift */; };
+		BB00CC11DD22EE33FF44AA14 /* OnboardingWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB00CC11DD22EE33FF44AA13 /* OnboardingWindowController.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -76,6 +78,8 @@
 		E0A3DFC9E34E82C108EB0255 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; name = Info.plist; path = BeamHost/Info.plist; sourceTree = SOURCE_ROOT; };
 		EC8A3305A39F17004C303284 /* BeamHostApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = BeamHostApp.swift; path = BeamHost/BeamHostApp.swift; sourceTree = SOURCE_ROOT; };
 		F7A3C21D98E450B6231DEA45 /* VideoQualityManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = VideoQualityManager.swift; path = BeamHost/Capture/VideoQualityManager.swift; sourceTree = SOURCE_ROOT; };
+		BB00CC11DD22EE33FF44AA11 /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = OnboardingView.swift; path = BeamHost/Onboarding/OnboardingView.swift; sourceTree = SOURCE_ROOT; };
+		BB00CC11DD22EE33FF44AA13 /* OnboardingWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = OnboardingWindowController.swift; path = BeamHost/Onboarding/OnboardingWindowController.swift; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -123,6 +127,15 @@
 				4D4BFDB62F48AE420E930EB6 /* Foundation.framework */,
 			);
 			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		BB00CC11DD22EE33FF44AA15 /* Onboarding */ = {
+			isa = PBXGroup;
+			children = (
+				BB00CC11DD22EE33FF44AA11 /* OnboardingView.swift */,
+				BB00CC11DD22EE33FF44AA13 /* OnboardingWindowController.swift */,
+			);
+			name = Onboarding;
 			sourceTree = "<group>";
 		};
 		2119FA25CC80334374842016 /* Pairing */ = {
@@ -184,6 +197,7 @@
 				326A04214703AF4B6F35D7B0 /* Capture */,
 				9B5A5897291E81FC14FEC2FE /* Network */,
 				2119FA25CC80334374842016 /* Pairing */,
+				BB00CC11DD22EE33FF44AA15 /* Onboarding */,
 				F463FD195E910129A74FD8C7 /* Settings */,
 				45B877375D6D6297BAAF2860 /* Resources */,
 				EC8A3305A39F17004C303284 /* BeamHostApp.swift */,
@@ -307,6 +321,8 @@
 				E00FE48B775023F63DB33E1A /* KeyStore.swift in Sources */,
 				8139624898A349ADA4ED5613 /* SettingsView.swift in Sources */,
 				E8CA90B03F07AC61C245D06D /* DisplayPicker.swift in Sources */,
+				BB00CC11DD22EE33FF44AA12 /* OnboardingView.swift in Sources */,
+				BB00CC11DD22EE33FF44AA14 /* OnboardingWindowController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

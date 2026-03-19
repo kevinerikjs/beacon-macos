@@ -99,8 +99,18 @@ final class AppState {
             self?.hasAccessibilityPermission = AXIsProcessTrusted()
         }
 
-        // Start the server pipeline
-        Task { await startServer() }
+        let onboarded = UserDefaults.standard.bool(forKey: "hasCompletedOnboarding")
+        print("[Beacon] hasCompletedOnboarding = \(onboarded)")
+        if onboarded {
+            Task { await startServer() }
+        } else {
+            print("[Beacon] scheduling onboarding window")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                guard let self else { print("[Beacon] self nil, skipping onboarding"); return }
+                print("[Beacon] presenting onboarding window")
+                OnboardingWindowController.shared.present(appState: self)
+            }
+        }
     }
 
     // MARK: - Server Lifecycle
