@@ -35,7 +35,6 @@ struct StatusItemView: View {
 
         Button("Preferences…") {
             openSettings()
-            // Bring app to front so settings window appears
             NSApp.activate(ignoringOtherApps: true)
         }
         .keyboardShortcut(",", modifiers: .command)
