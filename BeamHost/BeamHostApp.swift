@@ -6,9 +6,48 @@ import SwiftUI
 import ScreenCaptureKit
 import Sparkle
 
+// MARK: - App Delegate
+
+final class BeaconAppDelegate: NSObject, NSApplicationDelegate {
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // Track window visibility so the Dock icon appears only when a window is open.
+        // keyNotification fires when a window comes forward; willClose fires before dismissal.
+        for name in [NSWindow.didBecomeKeyNotification, NSWindow.willCloseNotification] {
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(windowSetChanged),
+                name: name,
+                object: nil
+            )
+        }
+
+        // Onboarding is triggered from AppState.init() where self is guaranteed available.
+    }
+
+    /// Called whenever a window gains focus or is about to close.
+    /// Re-evaluates whether the Dock icon should be shown.
+    @objc private func windowSetChanged() {
+        // Defer so willClose has time to complete before we query window visibility.
+        DispatchQueue.main.async { Self.syncActivationPolicy() }
+    }
+
+    /// Show the Dock icon iff at least one regular-level window is currently visible.
+    /// Menu bar extra windows sit at a much higher window level and are excluded.
+    static func syncActivationPolicy() {
+        let hasVisibleWindow = NSApp.windows.contains {
+            $0.isVisible && $0.level == .normal
+        }
+        NSApp.setActivationPolicy(hasVisibleWindow ? .regular : .accessory)
+    }
+}
+
+// MARK: - App Entry Point
+
 @main
 struct BeaconApp: App {
 
+    @NSApplicationDelegateAdaptor(BeaconAppDelegate.self) private var appDelegate
     @State private var appState = AppState()
 
     /// Sparkle updater controller — owns the update check lifecycle.
@@ -54,9 +93,12 @@ struct MenuBarIconLabel: View {
 
     var body: some View {
         HStack(spacing: 3) {
-            Image(systemName: "dot.radiowaves.right")
-                .symbolEffect(.pulse, options: .repeating, isActive: appState.isStreaming)
-                .foregroundStyle(.secondary)
+            Image("lighthouse")
+                .renderingMode(.template)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 18, height: 18)
+                .foregroundStyle(appState.isStreaming ? beamViolet : .secondary)
 
             VStack(spacing: 2) {
                 if appState.isStreaming {
