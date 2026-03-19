@@ -97,7 +97,7 @@ struct MenuBarIconLabel: View {
                 .renderingMode(.template)
                 .resizable()
                 .scaledToFit()
-                .frame(width: 18, height: 18)
+                .frame(width: 14, height: 14)
                 .foregroundStyle(appState.isStreaming ? beamViolet : .secondary)
 
             VStack(spacing: 2) {
