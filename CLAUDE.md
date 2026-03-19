@@ -93,6 +93,26 @@ xcodebuild archive \
 ```
 App is at: `/tmp/Beacon.xcarchive/Products/Applications/Beacon.app`
 
+> **Note:** The Sparkle framework's nested binaries (Updater.app, Autoupdate, XPC services) are NOT re-signed by the archive step and will fail notarization. Always run step 1.5 before creating the DMG.
+
+**1.5 Re-sign Sparkle nested binaries** (required — notarization will fail without this)
+```bash
+APP="/tmp/Beacon.xcarchive/Products/Applications/Beacon.app"
+CERT="Developer ID Application: KEVIN ERIK IIN (R4KDRC8S4D)"
+SPK="$APP/Contents/Frameworks/Sparkle.framework/Versions/B"
+
+codesign --force --sign "$CERT" --timestamp --options runtime "$SPK/XPCServices/Downloader.xpc/Contents/MacOS/Downloader"
+codesign --force --sign "$CERT" --timestamp --options runtime "$SPK/XPCServices/Downloader.xpc"
+codesign --force --sign "$CERT" --timestamp --options runtime "$SPK/XPCServices/Installer.xpc/Contents/MacOS/Installer"
+codesign --force --sign "$CERT" --timestamp --options runtime "$SPK/XPCServices/Installer.xpc"
+codesign --force --sign "$CERT" --timestamp --options runtime "$SPK/Updater.app/Contents/MacOS/Updater"
+codesign --force --sign "$CERT" --timestamp --options runtime "$SPK/Updater.app"
+codesign --force --sign "$CERT" --timestamp --options runtime "$SPK/Autoupdate"
+codesign --force --sign "$CERT" --timestamp --options runtime "$SPK/Sparkle"
+codesign --force --sign "$CERT" --timestamp --options runtime "$APP/Contents/Frameworks/Sparkle.framework"
+codesign --force --deep --sign "$CERT" --timestamp --options runtime "$APP"
+```
+
 **2. Build volume icon (if beam.icon/Assets/full-icon.png changed)**
 ```bash
 ICONSET=/tmp/Beacon.iconset; mkdir -p $ICONSET; ICON=beam.icon/Assets/full-icon.png
@@ -102,16 +122,17 @@ sips -z 64 64   $ICON --out $ICONSET/icon_32x32@2x.png
 sips -z 256 256 $ICON --out $ICONSET/icon_128x128@2x.png
 sips -z 512 512 $ICON --out $ICONSET/icon_256x256@2x.png
 cp $ICON $ICONSET/icon_512x512@2x.png
-iconutil -c icns $ICONSET -o /tmp/BeaconVolume.icns
+iconutil -c icns $ICONSET -o /Users/kevin/BeaconVolume.icns
 ```
 
 **3. Create DMG** (asset name is always `Beacon.dmg` — version goes in release title only)
+> Note: use an absolute path outside `/tmp` for `--volicon` — create-dmg runs a Finder AppleScript
+> that can lose access to `/tmp` files mid-run, causing a silent failure.
 ```bash
-APP="/tmp/Beacon.xcarchive/Products/Applications/Beacon.app"
 create-dmg --volname "Beacon" --window-size 540 380 --icon-size 128 \
   --icon "Beacon.app" 140 190 --app-drop-link 400 190 \
-  --volicon /tmp/BeaconVolume.icns --no-internet-enable \
-  /tmp/Beacon.dmg "$APP"
+  --volicon /Users/kevin/BeaconVolume.icns --no-internet-enable \
+  /tmp/Beacon.dmg /tmp/Beacon.xcarchive/Products/Applications/Beacon.app
 ```
 
 **4. Notarize the DMG**
@@ -140,6 +161,34 @@ Asset name is always `Beacon.dmg` so the stable `/releases/latest/download/Beaco
 git tag vX.Y.Z && git push origin vX.Y.Z
 ```
 This marks exactly which source code corresponds to each public release.
+
+**8. Update the Sparkle appcast** — Sparkle checks `https://beamscreen.app/appcast.xml` (served from `beam-web/public/appcast.xml`) to notify existing users of updates. Without this step, users on older versions will never see the update prompt.
+
+Get the EdDSA signature and file size:
+```bash
+SIGN=~/Library/Developer/Xcode/DerivedData/BeamHost-*/SourcePackages/artifacts/sparkle/Sparkle/bin/sign_update
+"$SIGN" /tmp/Beacon.dmg
+# outputs: sparkle:edSignature="..." length="..."
+```
+
+Then add a new `<item>` block at the top of `beam-web/public/appcast.xml`:
+```xml
+<item>
+  <title>Beacon vX.Y.Z</title>
+  <pubDate>Day, DD Mon YYYY 00:00:00 +0000</pubDate>
+  <sparkle:version>N</sparkle:version>              <!-- increment integer build number -->
+  <sparkle:shortVersionString>X.Y.Z</sparkle:shortVersionString>
+  <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+  <description><![CDATA[<ul><li>...</li></ul>]]></description>
+  <enclosure
+    url="https://github.com/flowtheci/beacon-releases/releases/download/vX.Y.Z/Beacon.dmg"
+    sparkle:edSignature="SIGNATURE_FROM_SIGN_UPDATE"
+    length="LENGTH_FROM_SIGN_UPDATE"
+    type="application/octet-stream"/>
+</item>
+```
+
+Commit and push `beam-web` — Vercel deploys it automatically and existing users will see the update prompt on next launch or "Check for Updates".
 
 ### Web download links (beam-web)
 Stable URL: `https://github.com/flowtheci/beacon-releases/releases/latest/download/Beacon.dmg`
