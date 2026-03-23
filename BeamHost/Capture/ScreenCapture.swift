@@ -173,6 +173,8 @@ final class ScreenCapture: NSObject {
         let filter = SCContentFilter(desktopIndependentWindow: window)
         try await stream.updateContentFilter(filter)
         currentWindow = window
+        // Apply destinationRect centering for the new window
+        try await stream.updateConfiguration(makeConfiguration(captureAudio: true))
         logger.info("ScreenCapture switched to window: \(window.title ?? "unknown")")
     }
 
@@ -180,10 +182,10 @@ final class ScreenCapture: NSObject {
     func stopWindowMode(display: SCDisplay) async throws {
         guard let stream else { return }
         currentDisplay = display
+        currentWindow = nil  // Clear before makeConfiguration so destinationRect is not applied
         let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
         try await stream.updateContentFilter(filter)
         try await stream.updateConfiguration(makeConfiguration(captureAudio: true))
-        currentWindow = nil
         logger.info("ScreenCapture returned to full display")
     }
 
@@ -251,6 +253,34 @@ final class ScreenCapture: NSObject {
             )
             if !lockedRect.isNull, lockedRect.width > 10, lockedRect.height > 10 {
                 config.sourceRect = lockedRect
+            }
+        } else if let currentWindow {
+            // No lock in window mode: explicitly center the window content in the output frame.
+            //
+            // By default SCKit aligns window content to the top-left of the output buffer,
+            // producing an asymmetric black region (e.g. all black at the bottom for a wide window).
+            // Centering via destinationRect gives symmetric letterbox/pillarbox AND makes the
+            // coordinate math in sourceNormalizedViewport (which assumes centered content) correct,
+            // so viewport lock selections map to the right source region.
+            let sourceWidth = currentWindow.frame.width
+            let sourceHeight = currentWindow.frame.height
+            if sourceWidth > 0, sourceHeight > 0 {
+                let windowAspect = sourceWidth / sourceHeight
+                let frameAspect = CGFloat(currentWidth) / CGFloat(currentHeight)
+                let scaledW: CGFloat
+                let scaledH: CGFloat
+                if windowAspect >= frameAspect {
+                    // Wider than output — fit to width, letterbox vertically
+                    scaledW = CGFloat(currentWidth)
+                    scaledH = (CGFloat(currentWidth) / windowAspect).rounded()
+                } else {
+                    // Taller than output — fit to height, pillarbox horizontally
+                    scaledH = CGFloat(currentHeight)
+                    scaledW = (CGFloat(currentHeight) * windowAspect).rounded()
+                }
+                let offsetX = ((CGFloat(currentWidth) - scaledW) / 2).rounded()
+                let offsetY = ((CGFloat(currentHeight) - scaledH) / 2).rounded()
+                config.destinationRect = CGRect(x: offsetX, y: offsetY, width: scaledW, height: scaledH)
             }
         }
         return config
