@@ -21,6 +21,7 @@
 		6B7C700B0ECA866342D2BFD1 /* VideoToolbox.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D212A137A4045B92F23F5376 /* VideoToolbox.framework */; };
 		765AEF2CA9047266D3138BC1 /* AudioToolbox.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2DDA4825CB23D5FC2F4F6C1E /* AudioToolbox.framework */; };
 		8139624898A349ADA4ED5613 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50F4A7F31A846ABF974B6E8E /* SettingsView.swift */; };
+		34797E63D384484A97E28754 /* MacFeedbackView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18D4C659F4324AB4B9B0F43C /* MacFeedbackView.swift */; };
 		8A21DE4FA57AD82913AC1F03 /* ScreenCaptureKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 59F9378E8DADD6CB98646113 /* ScreenCaptureKit.framework */; };
 		95B7C5156A66D1F5A6F34F12 /* Protocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0ED849CFAD1653E27680111 /* Protocol.swift */; };
 		9C11AF0126CAE9F3FAA974E0 /* LoginItemManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7076F1A63581EE3ADD5EA723 /* LoginItemManager.swift */; };
@@ -58,6 +59,7 @@
 		45018AE57E97782C6997BCA0 /* CoreMedia.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreMedia.framework; path = System/Library/Frameworks/CoreMedia.framework; sourceTree = SDKROOT; };
 		4D4BFDB62F48AE420E930EB6 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = System/Library/Frameworks/Foundation.framework; sourceTree = SDKROOT; };
 		50F4A7F31A846ABF974B6E8E /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SettingsView.swift; path = BeamHost/Settings/SettingsView.swift; sourceTree = SOURCE_ROOT; };
+		18D4C659F4324AB4B9B0F43C /* MacFeedbackView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = MacFeedbackView.swift; path = BeamHost/Settings/MacFeedbackView.swift; sourceTree = SOURCE_ROOT; };
 		51426D37347E81FF12533723 /* StreamServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = StreamServer.swift; path = BeamHost/Network/StreamServer.swift; sourceTree = SOURCE_ROOT; };
 		51A6E292D2C537497C59F849 /* ControlChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ControlChannel.swift; path = BeamHost/Network/ControlChannel.swift; sourceTree = SOURCE_ROOT; };
 		59F9378E8DADD6CB98646113 /* ScreenCaptureKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ScreenCaptureKit.framework; path = System/Library/Frameworks/ScreenCaptureKit.framework; sourceTree = SDKROOT; };
@@ -221,6 +223,7 @@
 			isa = PBXGroup;
 			children = (
 				50F4A7F31A846ABF974B6E8E /* SettingsView.swift */,
+				18D4C659F4324AB4B9B0F43C /* MacFeedbackView.swift */,
 				7C66AF734545AF788DD49158 /* DisplayPicker.swift */,
 			);
 			name = Settings;
@@ -320,6 +323,7 @@
 				C0B2C01DC0056C5E71DD49ED /* QRCodeGenerator.swift in Sources */,
 				E00FE48B775023F63DB33E1A /* KeyStore.swift in Sources */,
 				8139624898A349ADA4ED5613 /* SettingsView.swift in Sources */,
+				34797E63D384484A97E28754 /* MacFeedbackView.swift in Sources */,
 				E8CA90B03F07AC61C245D06D /* DisplayPicker.swift in Sources */,
 				BB00CC11DD22EE33FF44AA12 /* OnboardingView.swift in Sources */,
 				BB00CC11DD22EE33FF44AA14 /* OnboardingWindowController.swift in Sources */,
@@ -351,8 +355,8 @@
 				);
 				LE_TEXT_BASE_ADDRESS = 0;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				CURRENT_PROJECT_VERSION = 14;
-				MARKETING_VERSION = 1.1.3;
+				CURRENT_PROJECT_VERSION = 15;
+				MARKETING_VERSION = 1.1.4;
 				PRODUCT_BUNDLE_IDENTIFIER = com.beam.beacon;
 				PRODUCT_NAME = Beacon;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -404,8 +408,8 @@
 				);
 				LE_TEXT_BASE_ADDRESS = 0;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				CURRENT_PROJECT_VERSION = 14;
-				MARKETING_VERSION = 1.1.3;
+				CURRENT_PROJECT_VERSION = 15;
+				MARKETING_VERSION = 1.1.4;
 				PRODUCT_BUNDLE_IDENTIFIER = com.beam.beacon;
 				PRODUCT_NAME = Beacon;
 				SWIFT_EMIT_LOC_STRINGS = YES;

@@ -32,6 +32,7 @@ struct SettingsView: View {
 
 struct GeneralSettingsTab: View {
     @Environment(AppState.self) private var appState
+    @State private var showFeedback = false
 
     var body: some View {
         @Bindable var state = appState
@@ -87,9 +88,27 @@ struct GeneralSettingsTab: View {
                 }
             }
 
+            settingsGroup(header: "Support") {
+                Button {
+                    showFeedback = true
+                } label: {
+                    HStack {
+                        Text("Send Feedback…")
+                        Spacer()
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+            }
+
             Spacer()
         }
         .padding(.vertical, 4)
+        .sheet(isPresented: $showFeedback) {
+            MacFeedbackView()
+        }
     }
 
     private func openPrivacySettings(privacy: String) {
