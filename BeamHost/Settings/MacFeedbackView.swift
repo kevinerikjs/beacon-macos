@@ -115,6 +115,7 @@ struct MacFeedbackView: View {
                 var req = URLRequest(url: url)
                 req.httpMethod = "POST"
                 req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                req.setValue("REDACTED_FEEDBACK_SECRET", forHTTPHeaderField: "X-Beam-Secret")
                 var payload: [String: String] = ["message": trimmedMessage, "source": "macos"]
                 if !trimmedEmail.isEmpty { payload["email"] = trimmedEmail }
                 req.httpBody = try JSONEncoder().encode(payload)
