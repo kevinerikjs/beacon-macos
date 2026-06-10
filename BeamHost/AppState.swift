@@ -99,6 +99,12 @@ final class AppState {
             self?.hasAccessibilityPermission = AXIsProcessTrusted()
         }
 
+        // Global hotkey (BEAM-2): toggles window-streaming mode from anywhere.
+        HotkeyManager.shared.onActivate = { [weak self] in
+            self?.handleGlobalHotkey()
+        }
+        HotkeyManager.shared.start()
+
         let onboarded = UserDefaults.standard.bool(forKey: "hasCompletedOnboarding")
         print("[Beacon] hasCompletedOnboarding = \(onboarded)")
         if onboarded {
@@ -161,6 +167,19 @@ final class AppState {
         guard let server = streamServer else { return }
         await server.switchToDisplayMode()
         isWindowMode = false
+    }
+
+    /// Global hotkey action (BEAM-2): in window mode → back to full display;
+    /// otherwise → open the window picker to choose a window to beam.
+    private func handleGlobalHotkey() {
+        Task { @MainActor in
+            if isWindowMode {
+                await beamFullDisplay()
+            } else {
+                WindowPickerWindowController.shared.show(appState: self)
+                NSApp.activate(ignoringOtherApps: true)
+            }
+        }
     }
 
     // MARK: - Pairing

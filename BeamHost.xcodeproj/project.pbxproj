@@ -25,6 +25,7 @@
 		8A21DE4FA57AD82913AC1F03 /* ScreenCaptureKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 59F9378E8DADD6CB98646113 /* ScreenCaptureKit.framework */; };
 		95B7C5156A66D1F5A6F34F12 /* Protocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0ED849CFAD1653E27680111 /* Protocol.swift */; };
 		9C11AF0126CAE9F3FAA974E0 /* LoginItemManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7076F1A63581EE3ADD5EA723 /* LoginItemManager.swift */; };
+		A1B2C3D4E5F60718293A4B5D /* HotkeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A4B5C /* HotkeyManager.swift */; };
 		9E16FABCA7CB28FD5A76A8C7 /* AVFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AD6CBD24C7158E374A454127 /* AVFoundation.framework */; };
 		AB14914A15ECF1490C8B45CA /* StreamServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51426D37347E81FF12533723 /* StreamServer.swift */; };
 		ABD858C7F249644F59606EDC /* PairingManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8824943B0921A89297749477 /* PairingManager.swift */; };
@@ -47,6 +48,7 @@
 /* Begin PBXFileReference section */
 		0A36844E2F5383ED00094AA9 /* beam.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = beam.icon; sourceTree = "<group>"; };
 		0E5D21F7318EDD34ABD76A53 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppState.swift; path = BeamHost/AppState.swift; sourceTree = SOURCE_ROOT; };
+		A1B2C3D4E5F60718293A4B5C /* HotkeyManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = HotkeyManager.swift; path = BeamHost/HotkeyManager.swift; sourceTree = SOURCE_ROOT; };
 		10E752E2A74D78C7ABB83F23 /* Beacon.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Beacon.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		17B5FA7144B935B17D134309 /* StatusItemView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = StatusItemView.swift; path = BeamHost/MenuBar/StatusItemView.swift; sourceTree = SOURCE_ROOT; };
 		190B047D50552AE98AC63B83 /* AudioEncoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AudioEncoder.swift; path = BeamHost/Capture/AudioEncoder.swift; sourceTree = SOURCE_ROOT; };
@@ -204,6 +206,7 @@
 				45B877375D6D6297BAAF2860 /* Resources */,
 				EC8A3305A39F17004C303284 /* BeamHostApp.swift */,
 				0E5D21F7318EDD34ABD76A53 /* AppState.swift */,
+				A1B2C3D4E5F60718293A4B5C /* HotkeyManager.swift */,
 				7076F1A63581EE3ADD5EA723 /* LoginItemManager.swift */,
 				E0A3DFC9E34E82C108EB0255 /* Info.plist */,
 				5BC85343E06C5820CCA0C29A /* BeamHost.entitlements */,
@@ -307,6 +310,7 @@
 			files = (
 				CA3A413AA71B6643B82E2090 /* BeamHostApp.swift in Sources */,
 				3EE41EA4D46235B4167EE1DF /* AppState.swift in Sources */,
+				A1B2C3D4E5F60718293A4B5D /* HotkeyManager.swift in Sources */,
 				9C11AF0126CAE9F3FAA974E0 /* LoginItemManager.swift in Sources */,
 				BCC219152533314E717C396E /* StatusItemView.swift in Sources */,
 				51D7D41756CEA841B063E041 /* ScreenCapture.swift in Sources */,

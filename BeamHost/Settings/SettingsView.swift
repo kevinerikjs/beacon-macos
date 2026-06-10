@@ -59,6 +59,20 @@ struct GeneralSettingsTab: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
+            settingsGroup(header: "Global Hotkey") {
+                Toggle("Toggle window mode from anywhere", isOn: Binding(
+                    get: { HotkeyManager.shared.isEnabled },
+                    set: { HotkeyManager.shared.isEnabled = $0 }
+                ))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                Divider().padding(.leading, 12)
+                settingsRow("Shortcut") {
+                    HotkeyRecorderView()
+                }
+            }
+
             settingsGroup(header: "Permissions") {
                 settingsRow("Screen Recording") {
                     if appState.hasCapturePermission {
@@ -277,4 +291,50 @@ private func settingsRow<Content: View>(
     }
     .padding(.horizontal, 12)
     .padding(.vertical, 10)
+}
+
+// MARK: - Hotkey Recorder (BEAM-2)
+
+/// Click → "Press shortcut…" → next keydown (with at least one of ⌘⌥⌃) becomes the binding.
+/// Esc cancels. Uses a local key monitor only while recording.
+struct HotkeyRecorderView: View {
+    @State private var isRecording = false
+    @State private var displayString = HotkeyManager.shared.displayString
+    @State private var monitor: Any?
+
+    var body: some View {
+        Button {
+            isRecording ? stopRecording() : startRecording()
+        } label: {
+            Text(isRecording ? "Press shortcut…" : displayString)
+                .font(.callout.monospaced())
+                .frame(minWidth: 90)
+        }
+        .buttonStyle(.bordered)
+        .tint(isRecording ? .orange : nil)
+        .onDisappear { stopRecording() }
+    }
+
+    private func startRecording() {
+        isRecording = true
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            if event.keyCode == 53 { // Esc cancels
+                stopRecording()
+                return nil
+            }
+            // Require a real chord — a bare key would shadow normal typing system-wide.
+            guard !event.modifierFlags.intersection([.command, .option, .control]).isEmpty else { return nil }
+            let mods = HotkeyManager.carbonModifiers(from: event.modifierFlags)
+            HotkeyManager.shared.setBinding(keyCode: UInt32(event.keyCode), modifiers: mods)
+            displayString = HotkeyManager.shared.displayString
+            stopRecording()
+            return nil
+        }
+    }
+
+    private func stopRecording() {
+        isRecording = false
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+    }
 }
