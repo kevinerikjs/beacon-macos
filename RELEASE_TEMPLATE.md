@@ -74,7 +74,7 @@ xcrun stapler staple /tmp/Beacon.dmg
 
 # 6. Publish GitHub release (asset always named Beacon.dmg)
 gh release create vX.Y.Z \
-  --repo flowtheci/beacon-releases \
+  --repo kevinerikjs/beacon-releases \
   --title "Beacon vX.Y.Z" \
   --notes "RELEASE_NOTES" \
   "/tmp/Beacon.dmg#Beacon.dmg"
@@ -132,7 +132,7 @@ Add a new `<item>` block at the TOP of the `<channel>` (above the previous lates
     </ul>
   ]]></description>
   <enclosure
-    url="https://github.com/flowtheci/beacon-releases/releases/download/vX.Y.Z/Beacon.dmg"
+    url="https://github.com/kevinerikjs/beacon-releases/releases/download/vX.Y.Z/Beacon.dmg"
     sparkle:edSignature="SIGNATURE_FROM_SIGN_UPDATE"
     length="LENGTH_FROM_SIGN_UPDATE"
     type="application/octet-stream"/>

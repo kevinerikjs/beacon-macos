@@ -67,7 +67,7 @@ beam-macos/
 
 ## Release Deployment (Public DMG Repo)
 
-Source code lives in `flowtheci/beam-macos` (private). Installer DMGs are published to `flowtheci/beacon-releases` (public).
+Source code lives in `kevinerikjs/beam-macos` (private). Installer DMGs are published to `kevinerikjs/beacon-releases` (public).
 
 ### Prerequisites
 - **Developer ID Application** cert in keychain: `Developer ID Application: KEVIN ERIK IIN (R4KDRC8S4D)`
@@ -152,7 +152,7 @@ xcrun stapler staple /tmp/Beacon.dmg
 
 **6. Publish to releases repo**
 ```bash
-gh release create vX.Y.Z --repo flowtheci/beacon-releases --title "Beacon vX.Y.Z" --notes "..." "/tmp/Beacon.dmg#Beacon.dmg"
+gh release create vX.Y.Z --repo kevinerikjs/beacon-releases --title "Beacon vX.Y.Z" --notes "..." "/tmp/Beacon.dmg#Beacon.dmg"
 ```
 Asset name is always `Beacon.dmg` so the stable `/releases/latest/download/Beacon.dmg` URL never changes.
 
@@ -181,7 +181,7 @@ Then add a new `<item>` block at the top of `beam-web/public/appcast.xml`:
   <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
   <description><![CDATA[<ul><li>...</li></ul>]]></description>
   <enclosure
-    url="https://github.com/flowtheci/beacon-releases/releases/download/vX.Y.Z/Beacon.dmg"
+    url="https://github.com/kevinerikjs/beacon-releases/releases/download/vX.Y.Z/Beacon.dmg"
     sparkle:edSignature="SIGNATURE_FROM_SIGN_UPDATE"
     length="LENGTH_FROM_SIGN_UPDATE"
     type="application/octet-stream"/>
@@ -191,7 +191,7 @@ Then add a new `<item>` block at the top of `beam-web/public/appcast.xml`:
 Commit and push `beam-web` — Vercel deploys it automatically and existing users will see the update prompt on next launch or "Check for Updates".
 
 ### Web download links (beam-web)
-Stable URL: `https://github.com/flowtheci/beacon-releases/releases/latest/download/Beacon.dmg`
+Stable URL: `https://github.com/kevinerikjs/beacon-releases/releases/latest/download/Beacon.dmg`
 Files that reference this constant (keep aligned):
 - `beam-web/src/components/Hero.tsx` — `MACOS_DOWNLOAD_URL`
 - `beam-web/src/components/Download.tsx` — `MACOS_DOWNLOAD_URL`

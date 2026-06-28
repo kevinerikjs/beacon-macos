@@ -2,7 +2,7 @@
 
 Beacon is the macOS menu bar app that captures your screen and audio and streams it to the Beam iOS app over your local network. It uses ScreenCaptureKit for capture, VideoToolbox for H.264 hardware encoding, and Network.framework for streaming.
 
-**iOS client:** [beam-ios](https://github.com/flowtheci/beam-ios) — **Download:** [Beacon.dmg](https://github.com/flowtheci/beacon-releases/releases/latest/download/Beacon.dmg)
+**iOS client:** [beam-ios](https://github.com/kevinerikjs/beam-ios) — **Download:** [Beacon.dmg](https://github.com/kevinerikjs/beacon-releases/releases/latest/download/Beacon.dmg)
 
 ---
 
@@ -15,7 +15,7 @@ Beacon is the macOS menu bar app that captures your screen and audio and streams
 ## Local Development
 
 ```bash
-git clone git@github.com:flowtheci/beam-macos.git
+git clone git@github.com:kevinerikjs/beam-macos.git
 cd beam-macos
 open BeamHost.xcodeproj
 ```
@@ -80,15 +80,15 @@ The full signed + notarized release process lives in [`CLAUDE.md`](./CLAUDE.md) 
 
 4. **Staple**: `xcrun stapler staple /tmp/Beacon.dmg`
 
-5. **Publish** to [beacon-releases](https://github.com/flowtheci/beacon-releases):
+5. **Publish** to [beacon-releases](https://github.com/kevinerikjs/beacon-releases):
    ```bash
-   gh release create vX.Y.Z --repo flowtheci/beacon-releases \
+   gh release create vX.Y.Z --repo kevinerikjs/beacon-releases \
      --title "Beacon vX.Y.Z" --notes "..." "/tmp/Beacon.dmg#Beacon.dmg"
    ```
 
 6. **Tag** the source commit: `git tag vX.Y.Z && git push origin vX.Y.Z`
 
-> The stable download URL `https://github.com/flowtheci/beacon-releases/releases/latest/download/Beacon.dmg` always points to the latest release automatically.
+> The stable download URL `https://github.com/kevinerikjs/beacon-releases/releases/latest/download/Beacon.dmg` always points to the latest release automatically.
 
 ## AI Development (Claude Code)
 
