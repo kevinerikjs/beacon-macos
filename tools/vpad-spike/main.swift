@@ -10,6 +10,11 @@
 // Run:    sudo ./vpad-spike     (root bypasses the com.apple.developer.hid.virtual.device
 //         entitlement, which is Apple-approval-gated; Beacon itself needs the entitlement)
 //
+// Bridge mode:  sudo ./vpad-spike --bridge
+// Instead of demo input, listens on UDP 127.0.0.1:3398 for 9-byte HID reports.
+// Debug builds of Beacon forward controller reports here when they can't create the
+// virtual pad themselves — full end-to-end passthrough testing before Apple approval.
+//
 // Success criteria: "GCController connected" is printed with an extendedGamepad profile,
 // and the demo inputs are visible in a gamepad tester. If GCController does NOT pick it
 // up, the fallback is emulating a known controller (DualShock 4 descriptor + VID/PID).
@@ -62,6 +67,37 @@ NotificationCenter.default.addObserver(forName: .GCControllerDidConnect, object:
     print("🎮 GCController connected: \"\(c.vendorName ?? "?")\" — profile: \(profile)")
 }
 GCController.startWirelessControllerDiscovery {}
+
+// --- Bridge mode: replay reports forwarded by a Debug build of Beacon ---
+if CommandLine.arguments.contains("--bridge") {
+    let fd = socket(AF_INET, SOCK_DGRAM, 0)
+    guard fd >= 0 else { print("❌ socket() failed"); exit(1) }
+    var addr = sockaddr_in()
+    addr.sin_family = sa_family_t(AF_INET)
+    addr.sin_port = in_port_t(3398).bigEndian
+    addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+    let bound = withUnsafePointer(to: &addr) {
+        $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+            bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+        }
+    }
+    guard bound == 0 else { print("❌ bind(127.0.0.1:3398) failed — already running?"); exit(1) }
+    print("🌉 Bridge mode: replaying HID reports from Beacon (UDP 127.0.0.1:3398). Ctrl-C to quit.")
+    var reportCount = 0
+    Thread.detachNewThread {
+        var buf = [UInt8](repeating: 0, count: 16)
+        while true {
+            let n = recv(fd, &buf, buf.count, 0)
+            guard n == 9 else { continue }
+            _ = IOHIDUserDeviceHandleReportWithTimeStamp(device, mach_absolute_time(), buf, 9)
+            reportCount += 1
+            if reportCount == 1 { print("📥 First report received from Beacon — passthrough is live.") }
+            if reportCount % 600 == 0 { print("📥 \(reportCount) reports replayed") }
+        }
+    }
+    RunLoop.main.run()
+    exit(0)
+}
 
 // --- Demo input loop (~120 s) ---
 func report(buttons b0: UInt8, b1: UInt8 = 0, hat: UInt8 = 8,

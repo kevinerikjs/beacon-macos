@@ -8,6 +8,7 @@
 
 import Foundation
 import IOKit.hid
+import Network
 import OSLog
 
 private let logger = Logger(subsystem: "com.beam.beacon", category: "VirtualGamepad")
@@ -89,8 +90,16 @@ final class VirtualGamepad {
             if device == nil {
                 createLocked()
             }
-            guard let device else { return }
             let report = Self.report(for: state)
+            guard let device else {
+                #if DEBUG
+                // Dev-only fallback while the hid.virtual.device entitlement is pending
+                // Apple approval: forward reports to `sudo vpad-spike --bridge`, which
+                // owns the virtual pad as root. See tools/vpad-spike.
+                bridgeSendLocked(report)
+                #endif
+                return
+            }
             let result = report.withUnsafeBufferPointer { buf in
                 IOHIDUserDeviceHandleReportWithTimeStamp(
                     device, mach_absolute_time(), buf.baseAddress!, buf.count
@@ -132,10 +141,39 @@ final class VirtualGamepad {
     }
 
     private func teardownLocked() {
+        #if DEBUG
+        bridge?.cancel()
+        bridge = nil
+        #endif
         guard device != nil else { return }
         device = nil  // releasing the last reference removes the HID device
         logger.info("Virtual gamepad removed")
     }
+
+    #if DEBUG
+    // MARK: - vpad-spike bridge (dev only, on queue)
+
+    private var bridge: NWConnection?
+    private var bridgeAnnounced = false
+    static let bridgePort: UInt16 = 3398
+
+    private func bridgeSendLocked(_ report: [UInt8]) {
+        if bridge == nil {
+            let conn = NWConnection(
+                host: .ipv4(.loopback),
+                port: NWEndpoint.Port(rawValue: Self.bridgePort)!,
+                using: .udp
+            )
+            conn.start(queue: queue)
+            bridge = conn
+        }
+        if !bridgeAnnounced {
+            bridgeAnnounced = true
+            logger.info("Virtual pad unavailable (entitlement pending) — forwarding reports to vpad-spike bridge on 127.0.0.1:\(Self.bridgePort). Run: sudo vpad-spike --bridge")
+        }
+        bridge?.send(content: Data(report), completion: .idempotent)
+    }
+    #endif
 
     // MARK: - Report building
 
