@@ -58,6 +58,7 @@ final class StreamSession {
         heartbeatTimer = nil
         connection.cancel()
         udpConnection?.cancel()
+        VirtualGamepad.shared.teardown()
         logger.info("Session \(self.id) disconnected")
     }
 
@@ -100,6 +101,14 @@ final class StreamSession {
     }
 
     private func handleIncomingMessage(_ data: Data) {
+        // Binary packets (controller input) carry a BeamPacketHeader; JSON messages
+        // never start with the "BEAM" magic, so this check is unambiguous and cheap.
+        if let header = BeamPacketHeader.parse(from: data), header.type == .input {
+            guard isAuthenticated,
+                  let state = BeamControllerState.parse(from: data.dropFirst(BeamPacketHeader.size)) else { return }
+            VirtualGamepad.shared.handle(state, connected: header.flags & BeamControllerState.connectedFlag != 0)
+            return
+        }
         do {
             let message = try JSONDecoder().decode(BeamPairingMessage.self, from: data)
             handlePairingMessage(message)

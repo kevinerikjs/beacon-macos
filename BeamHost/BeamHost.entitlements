@@ -9,5 +9,14 @@
 	<!-- Hardened Runtime exceptions needed for ScreenCaptureKit -->
 	<key>com.apple.security.cs.allow-jit</key>
 	<false/>
+
+	<!-- Virtual HID gamepad for controller passthrough (IOHIDUserDevice, macOS 13+).
+	     APPROVAL-GATED: this capability must be granted by Apple to the team before a
+	     build carrying it will sign/run (request via developer portal). Until approval,
+	     keep it commented out — VirtualGamepad fails gracefully at runtime without it.
+	<key>com.apple.developer.hid.virtual.device</key>
+	<true/>
+	-->
+
 </dict>
 </plist>
