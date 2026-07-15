@@ -18,3 +18,4 @@ xcuserdata/
 # Local Claude Code customization (personal overrides, not shared)
 CLAUDE.local.md
 tools/vpad-spike/vpad-spike
+tools/vpad-spike/vpad-spike-ent

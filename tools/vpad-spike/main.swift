@@ -7,13 +7,18 @@
 //      so it can be observed live in a game, Gamepad Tester, or a GCController app.
 //
 // Build:  swiftc -O -framework IOKit -framework GameController -o vpad-spike main.swift
-// Run:    sudo ./vpad-spike     (root bypasses the com.apple.developer.hid.virtual.device
-//         entitlement, which is Apple-approval-gated; Beacon itself needs the entitlement)
 //
-// Bridge mode:  sudo ./vpad-spike --bridge
-// Instead of demo input, listens on UDP 127.0.0.1:3398 for 9-byte HID reports.
-// Debug builds of Beacon forward controller reports here when they can't create the
-// virtual pad themselves — full end-to-end passthrough testing before Apple approval.
+// FINDING (2026-07-16, macOS 26 / Darwin 25): the com.apple.developer.hid.virtual.device
+// entitlement is enforced unconditionally — running as root does NOT bypass it (all
+// creation attempts return nil under sudo), and ad-hoc signing a binary with the
+// entitlement gets it SIGKILLed by AMFI. There is no pre-approval test path; the
+// capability must be granted by Apple to the team.
+//
+// This tool remains useful AFTER the capability is granted: sign it with the
+// entitlement + a real signing identity, run it, and it validates that the gamepad
+// descriptor is accepted and that GCController picks the pad up, then feeds demo
+// input for observation in a game or gamepad tester. It also serves as a diagnostic
+// (attempt matrix distinguishes descriptor rejection from entitlement denial).
 //
 // Success criteria: "GCController connected" is printed with an extendedGamepad profile,
 // and the demo inputs are visible in a gamepad tester. If GCController does NOT pick it
@@ -47,11 +52,38 @@ let properties: [String: Any] = [
     kIOHIDPrimaryUsageKey: kHIDUsage_GD_GamePad,
 ]
 
-print("Creating virtual gamepad (VID 0x1209, PID 0xBEA0)…")
-guard let device = IOHIDUserDeviceCreateWithProperties(kCFAllocatorDefault, properties as CFDictionary, 0) else {
-    print("❌ IOHIDUserDeviceCreateWithProperties failed.")
-    print("   Not running as root and no hid.virtual.device entitlement → expected failure.")
-    print("   Re-run with: sudo ./vpad-spike")
+print("Creating virtual gamepad (VID 0x1209, PID 0xBEA0)… (euid=\(geteuid()))")
+
+func attempt(_ label: String, _ props: [String: Any]) -> IOHIDUserDevice? {
+    let d = IOHIDUserDeviceCreateWithProperties(kCFAllocatorDefault, props as CFDictionary, 0)
+    print("  [\(label)] \(d == nil ? "❌ nil" : "✅ created")")
+    return d
+}
+
+var device = attempt("gamepad descriptor + full properties", properties)
+
+if device == nil {
+    // Diagnose: descriptor problem vs entitlement enforcement.
+    device = attempt("gamepad descriptor only", [kIOHIDReportDescriptorKey: Data(reportDescriptor)])
+    if device == nil {
+        // Canonical minimal descriptor (2-axis, 2-button joystick straight from the HID spec).
+        // If THIS also fails, the block is entitlement/AMFI, not our descriptor.
+        let canonical: [UInt8] = [
+            0x05, 0x01, 0x09, 0x04, 0xA1, 0x01, 0xA1, 0x00,
+            0x05, 0x09, 0x19, 0x01, 0x29, 0x02, 0x15, 0x00, 0x25, 0x01,
+            0x95, 0x02, 0x75, 0x01, 0x81, 0x02, 0x95, 0x01, 0x75, 0x06, 0x81, 0x03,
+            0x05, 0x01, 0x09, 0x30, 0x09, 0x31, 0x15, 0x81, 0x25, 0x7F,
+            0x75, 0x08, 0x95, 0x02, 0x81, 0x02, 0xC0, 0xC0,
+        ]
+        device = attempt("canonical joystick descriptor", [kIOHIDReportDescriptorKey: Data(canonical)])
+    }
+}
+
+guard let device else {
+    print("❌ All creation attempts failed (euid=\(geteuid())).")
+    print("   The hid.virtual.device entitlement is enforced unconditionally on this macOS")
+    print("   (root does not bypass; ad-hoc signing is AMFI-killed). The capability must be")
+    print("   granted by Apple, then this tool must be signed with the entitlement to run.")
     exit(1)
 }
 print("✅ Virtual HID device created.")
@@ -67,37 +99,6 @@ NotificationCenter.default.addObserver(forName: .GCControllerDidConnect, object:
     print("🎮 GCController connected: \"\(c.vendorName ?? "?")\" — profile: \(profile)")
 }
 GCController.startWirelessControllerDiscovery {}
-
-// --- Bridge mode: replay reports forwarded by a Debug build of Beacon ---
-if CommandLine.arguments.contains("--bridge") {
-    let fd = socket(AF_INET, SOCK_DGRAM, 0)
-    guard fd >= 0 else { print("❌ socket() failed"); exit(1) }
-    var addr = sockaddr_in()
-    addr.sin_family = sa_family_t(AF_INET)
-    addr.sin_port = in_port_t(3398).bigEndian
-    addr.sin_addr.s_addr = inet_addr("127.0.0.1")
-    let bound = withUnsafePointer(to: &addr) {
-        $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-            bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
-        }
-    }
-    guard bound == 0 else { print("❌ bind(127.0.0.1:3398) failed — already running?"); exit(1) }
-    print("🌉 Bridge mode: replaying HID reports from Beacon (UDP 127.0.0.1:3398). Ctrl-C to quit.")
-    var reportCount = 0
-    Thread.detachNewThread {
-        var buf = [UInt8](repeating: 0, count: 16)
-        while true {
-            let n = recv(fd, &buf, buf.count, 0)
-            guard n == 9 else { continue }
-            _ = IOHIDUserDeviceHandleReportWithTimeStamp(device, mach_absolute_time(), buf, 9)
-            reportCount += 1
-            if reportCount == 1 { print("📥 First report received from Beacon — passthrough is live.") }
-            if reportCount % 600 == 0 { print("📥 \(reportCount) reports replayed") }
-        }
-    }
-    RunLoop.main.run()
-    exit(0)
-}
 
 // --- Demo input loop (~120 s) ---
 func report(buttons b0: UInt8, b1: UInt8 = 0, hat: UInt8 = 8,

@@ -8,7 +8,6 @@
 
 import Foundation
 import IOKit.hid
-import Network
 import OSLog
 
 private let logger = Logger(subsystem: "com.beam.beacon", category: "VirtualGamepad")
@@ -90,16 +89,8 @@ final class VirtualGamepad {
             if device == nil {
                 createLocked()
             }
+            guard let device else { return }
             let report = Self.report(for: state)
-            guard let device else {
-                #if DEBUG
-                // Dev-only fallback while the hid.virtual.device entitlement is pending
-                // Apple approval: forward reports to `sudo vpad-spike --bridge`, which
-                // owns the virtual pad as root. See tools/vpad-spike.
-                bridgeSendLocked(report)
-                #endif
-                return
-            }
             let result = report.withUnsafeBufferPointer { buf in
                 IOHIDUserDeviceHandleReportWithTimeStamp(
                     device, mach_absolute_time(), buf.baseAddress!, buf.count
@@ -118,7 +109,13 @@ final class VirtualGamepad {
 
     // MARK: - Device lifecycle (on queue)
 
+    /// Set once creation fails so we don't retry (and re-log) at report rate (60 Hz).
+    /// Reset on teardown so a fresh session re-attempts (e.g. after entitlement granted
+    /// via app update).
+    private var creationFailed = false
+
     private func createLocked() {
+        guard !creationFailed else { return }
         let properties: [String: Any] = [
             kIOHIDReportDescriptorKey: Data(Self.reportDescriptor),
             kIOHIDVendorIDKey: 0x1209,          // pid.codes open-source VID
@@ -133,7 +130,8 @@ final class VirtualGamepad {
         guard let created = IOHIDUserDeviceCreateWithProperties(
             kCFAllocatorDefault, properties as CFDictionary, 0
         ) else {
-            logger.error("Failed to create virtual gamepad — is the com.apple.developer.hid.virtual.device entitlement present?")
+            creationFailed = true
+            logger.error("Failed to create virtual gamepad — the com.apple.developer.hid.virtual.device entitlement is missing or not granted (Apple approval required). Controller input will be dropped.")
             return
         }
         device = created
@@ -141,39 +139,11 @@ final class VirtualGamepad {
     }
 
     private func teardownLocked() {
-        #if DEBUG
-        bridge?.cancel()
-        bridge = nil
-        #endif
+        creationFailed = false
         guard device != nil else { return }
         device = nil  // releasing the last reference removes the HID device
         logger.info("Virtual gamepad removed")
     }
-
-    #if DEBUG
-    // MARK: - vpad-spike bridge (dev only, on queue)
-
-    private var bridge: NWConnection?
-    private var bridgeAnnounced = false
-    static let bridgePort: UInt16 = 3398
-
-    private func bridgeSendLocked(_ report: [UInt8]) {
-        if bridge == nil {
-            let conn = NWConnection(
-                host: .ipv4(.loopback),
-                port: NWEndpoint.Port(rawValue: Self.bridgePort)!,
-                using: .udp
-            )
-            conn.start(queue: queue)
-            bridge = conn
-        }
-        if !bridgeAnnounced {
-            bridgeAnnounced = true
-            logger.info("Virtual pad unavailable (entitlement pending) — forwarding reports to vpad-spike bridge on 127.0.0.1:\(Self.bridgePort). Run: sudo vpad-spike --bridge")
-        }
-        bridge?.send(content: Data(report), completion: .idempotent)
-    }
-    #endif
 
     // MARK: - Report building
 
