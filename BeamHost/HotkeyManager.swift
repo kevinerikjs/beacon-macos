@@ -124,9 +124,14 @@ final class HotkeyManager {
         case kVK_RightArrow: return "→"
         case kVK_UpArrow: return "↑"
         case kVK_DownArrow: return "↓"
-        case kVK_F1...kVK_F20 where fKeyNumber(keyCode) != nil: return "F\(fKeyNumber(keyCode)!)"
         default: break
         }
+        // NOT a range check: the F-key virtual keycodes are not numerically ordered
+        // (kVK_F1 is 122, kVK_F20 is 90), so `kVK_F1...kVK_F20` builds a range whose
+        // lowerBound exceeds its upperBound and traps at runtime for *every* keycode that
+        // reaches it — which crashed Beacon whenever the settings window was opened.
+        // fKeyNumber's explicit map is the only correct way to recognise these.
+        if let number = fKeyNumber(keyCode) { return "F\(number)" }
         guard let source = TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue(),
               let layoutData = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData) else {
             return "Key \(keyCode)"
