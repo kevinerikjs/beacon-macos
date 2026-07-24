@@ -550,7 +550,15 @@ final class StreamSession {
     // between call sites.
     private var pendingAudio: [Data] = []
     private var pendingVideo: [Data] = []
-    private var isWriting = false
+    /// Number of writes handed to the transport but not yet acknowledged.
+    ///
+    /// This was a single boolean, which made the send path stop-and-wait: one outstanding
+    /// write at a time, each waiting for .contentProcessed before the next. A 1080p60 frame
+    /// fragments into dozens of writes, so throughput collapsed and even a LAN backed up —
+    /// Kevin's log went from clean to -10s drift on local. Allowing a window restores
+    /// pipelining while still draining audio first, which was the actual goal.
+    private var writesInFlight = 0
+    private let maxConcurrentWrites = 8
 
     private func enqueueSend(_ data: Data, isAudio: Bool) {
         backlogLock.lock()
@@ -561,22 +569,25 @@ final class StreamSession {
 
     /// Writes one buffer at a time, audio first, so a queued keyframe can never delay audio.
     private func drainSendQueue() {
-        backlogLock.lock()
-        guard !isWriting else { backlogLock.unlock(); return }
-        let isAudio = !pendingAudio.isEmpty
-        guard let next = isAudio ? pendingAudio.first : pendingVideo.first else {
-            backlogLock.unlock(); return
-        }
-        if isAudio { pendingAudio.removeFirst() } else { pendingVideo.removeFirst() }
-        isWriting = true
-        backlogLock.unlock()
+        while true {
+            backlogLock.lock()
+            guard writesInFlight < maxConcurrentWrites else { backlogLock.unlock(); return }
+            // Audio first, always: that is the whole point of the queue.
+            let isAudio = !pendingAudio.isEmpty
+            guard let next = isAudio ? pendingAudio.first : pendingVideo.first else {
+                backlogLock.unlock(); return
+            }
+            if isAudio { pendingAudio.removeFirst() } else { pendingVideo.removeFirst() }
+            writesInFlight += 1
+            backlogLock.unlock()
 
-        sendTCP(next, isAudio: isAudio) { [weak self] in
-            guard let self else { return }
-            self.backlogLock.lock()
-            self.isWriting = false
-            self.backlogLock.unlock()
-            self.drainSendQueue()
+            sendTCP(next, isAudio: isAudio) { [weak self] in
+                guard let self else { return }
+                self.backlogLock.lock()
+                self.writesInFlight -= 1
+                self.backlogLock.unlock()
+                self.drainSendQueue()
+            }
         }
     }
 
