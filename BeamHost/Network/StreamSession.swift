@@ -55,6 +55,21 @@ final class StreamSession {
     /// 1.5 Mbps and a quarter-second at 6 Mbps, so it stays small enough to keep latency
     /// bounded without dropping on brief, normal bursts.
     private let maxQueuedMediaBytes = 192 * 1024
+
+    /// Audio gets its own, higher ceiling and is checked separately.
+    ///
+    /// Audio is uncompressed Float32 stereo PCM — 44100 x 2ch x 4B = 352,800 B/s = 2.82 Mbps,
+    /// constant, and completely independent of the video preset (ScreenCapture.swift:219-221,
+    /// AudioEncoder is a passthrough despite Protocol.swift calling packet 0x02 an "AAC chunk").
+    /// At 360p30 that is 65% of everything we send.
+    ///
+    /// Because sendTCP counts every byte but only video consulted the counter, 0.56s of PCM was
+    /// enough to pin inFlightBytes above the video threshold permanently: every delta frame was
+    /// dropped for the rest of the session while forced IDRs kept flowing. That is the 2 fps
+    /// keyframe slideshow — the backpressure was throttling the minority of the traffic to
+    /// protect the hog.
+    private let maxQueuedAudioBytes = 288 * 1024
+    private var droppedAudioChunks = 0
     private var heartbeatTimer: DispatchSourceTimer?
     private var lastPongReceivedAt = Date()
     private let heartbeatTimeout: TimeInterval = 12
@@ -389,6 +404,20 @@ final class StreamSession {
 
     func send(audioData: Data, pts: CMTime) {
         guard isAuthenticated else { return }
+
+        // Audio must be able to shed load too, or it starves video off the link entirely.
+        // Its ceiling is deliberately higher than video's: dropped audio splices rather than
+        // gapping (the receiver reorders by sequence but never inserts silence), so it should
+        // only ever give way when the link is genuinely unable to carry it.
+        if inFlightBytes > maxQueuedAudioBytes {
+            droppedAudioChunks += 1
+            let now = Date()
+            if now.timeIntervalSince(lastDropLogAt) >= 5 {
+                lastDropLogAt = now
+                logger.info("Dropping audio, link saturated (\(self.droppedAudioChunks) chunks, backlog \(self.inFlightBytes / 1024)KB)")
+            }
+            return
+        }
 
         let seqNum = audioSequenceNumber
         audioSequenceNumber &+= 1
