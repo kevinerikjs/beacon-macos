@@ -318,6 +318,15 @@ final class StreamSession {
             }
         case .pong:
             lastPongReceivedAt = Date()
+        case .videoPause:
+            videoPaused = true
+            // Drop anything already queued: it is stale by the time video resumes, and holding
+            // it defeats the point of quieting the link.
+            backlogLock.lock(); pendingVideo.removeAll(); backlogLock.unlock()
+            logger.info("Video paused by client (connection warmup)")
+        case .videoResume:
+            videoPaused = false
+            logger.info("Video resumed by client")
         case .ping:
             // Must be wrapped in a BeamPacketHeader like every other control message. This
             // previously sent bare JSON, which the client discards outright: its receive loop
@@ -424,7 +433,7 @@ final class StreamSession {
     }
 
     func send(videoData: Data, pts: CMTime, isKeyframe: Bool) {
-        guard isAuthenticated else { return }
+        guard isAuthenticated, !videoPaused else { return }
 
         // Drop rather than queue when the link is already behind. Keyframes are exempt:
         // dropping one strands the decoder until the next IDR, which is a far worse artefact
@@ -548,6 +557,15 @@ final class StreamSession {
     //
     // Writes are serialised through this queue so ordering is ours to decide, not a race
     // between call sites.
+    /// While true the host holds video and keeps audio flowing (BEAM-33).
+    ///
+    /// Used during connection warmup: Tailscale always starts DERP-relayed and upgrades to a
+    /// direct path using small discovery packets. Flooding the relay with video starves those
+    /// packets, so the upgrade never completes and we stay on the slow path we created.
+    /// Audio is ~96kbps and leaves the relay effectively idle, so it can flow throughout
+    /// without preventing the upgrade.
+    private var videoPaused = false
+
     private var pendingAudio: [Data] = []
     private var pendingVideo: [Data] = []
     /// Number of writes handed to the transport but not yet acknowledged.
