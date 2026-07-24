@@ -38,6 +38,16 @@ final class StreamServer {
     private var pendingLockedViewportRect: CGRect? = nil
     private var currentAudioFormat: (sampleRate: Double, channels: Int)? = nil
 
+    /// Recomputes whether the AAC encoder needs to run at all. AAC encoding is pure waste
+    /// unless at least one authenticated session negotiated it, so it is gated on the live
+    /// session set and re-evaluated on every connect/disconnect.
+    private func refreshAACOutputEnabled() {
+        let needed = sessionsQueue.sync {
+            activeSessions.values.contains { $0.negotiatedAudioCodec == .aacLC }
+        }
+        audioEncoder.isAACOutputEnabled = needed
+    }
+
     /// Continuous watchdog that detects a wedged capture pipeline while clients are connected.
     private var captureWatchdogTimer: DispatchSourceTimer?
     /// How long (seconds) without a captured frame before the watchdog restarts the pipeline.
@@ -150,6 +160,17 @@ final class StreamServer {
 
         qualityManager.sessionStarted()
 
+        // The session's codec is already fixed by the time authentication completes, so this
+        // sees the final value. Do it before capture starts so the very first audio buffer of
+        // a fresh AAC session is already being encoded.
+        refreshAACOutputEnabled()
+        audioEncoder.setAACBitrate(
+            BeamAudioCodec.aacBitrate(
+                for: qualityManager.activePreset,
+                channels: currentAudioFormat?.channels ?? 2
+            )
+        )
+
         // Tell iOS what quality is currently active
         session.sendQualityChanged(qualityManager.activePreset)
         if let audioFormat = currentAudioFormat {
@@ -186,6 +207,7 @@ final class StreamServer {
         }
         guard let remaining else { return }  // Already removed — nothing to do
         logger.info("Session disconnected: \(session.id). Active sessions: \(remaining)")
+        refreshAACOutputEnabled()
 
         if remaining == 0 {
             stopCaptureWatchdog()
@@ -216,6 +238,7 @@ final class StreamServer {
         }
         sessions.forEach { $0.disconnect() }
         stopCaptureWatchdog()
+        refreshAACOutputEnabled()
         qualityManager.sessionEnded()
         Task { @MainActor in
             appState?.isStreaming = false
@@ -287,6 +310,12 @@ final class StreamServer {
 
     private func applyQualityPreset(_ preset: StreamQualityPreset) {
         videoEncoder.reconfigure(preset: preset)
+        // The preset is the only signal the host has for "constrained link", and the auto
+        // tiering drives it down on exactly those links. Bitrate is settable live, so this
+        // neither tears down the converter nor re-anchors the PTS clock.
+        audioEncoder.setAACBitrate(
+            BeamAudioCodec.aacBitrate(for: preset, channels: currentAudioFormat?.channels ?? 2)
+        )
         Task {
             try? await screenCapture.updateConfiguration(preset: preset)
             broadcastQualityChanged(preset)
@@ -571,13 +600,26 @@ extension StreamServer: VideoEncoderDelegate {
 // MARK: - AudioEncoderDelegate
 
 extension StreamServer: AudioEncoderDelegate {
-    func audioEncoder(_ encoder: AudioEncoder, didEncodeChunk data: Data, presentationTime: CMTime) {
-        let sessions = sessionsQueue.sync { Array(activeSessions.values) }
-        sessions.forEach { $0.send(audioData: data, pts: presentationTime) }
+    func audioEncoder(_ encoder: AudioEncoder, didProducePCMChunk data: Data, presentationTime: CMTime) {
+        let sessions = sessionsQueue.sync {
+            activeSessions.values.filter { $0.negotiatedAudioCodec == .pcmFloat32 }
+        }
+        sessions.forEach { $0.send(audioData: data, codec: .pcmFloat32, pts: presentationTime) }
+    }
+
+    func audioEncoder(_ encoder: AudioEncoder, didProduceAACChunk data: Data, presentationTime: CMTime) {
+        let sessions = sessionsQueue.sync {
+            activeSessions.values.filter { $0.negotiatedAudioCodec == .aacLC }
+        }
+        sessions.forEach { $0.send(audioData: data, codec: .aacLC, pts: presentationTime) }
     }
 
     func audioEncoder(_ encoder: AudioEncoder, didUpdateSampleRate sampleRate: Double, channels: Int) {
         currentAudioFormat = (sampleRate: sampleRate, channels: channels)
         broadcastAudioFormatChanged(sampleRate: sampleRate, channels: channels)
+        // Channel count feeds the bitrate table (mono is halved).
+        audioEncoder.setAACBitrate(
+            BeamAudioCodec.aacBitrate(for: qualityManager.activePreset, channels: channels)
+        )
     }
 }

@@ -23,6 +23,13 @@ final class StreamSession {
     private var clientUDPEndpoint: NWEndpoint?
 
     private var isAuthenticated = false
+
+    /// Codec this session's client can actually decode. Defaults to .pcmFloat32 and is only
+    /// ever raised by an explicit advertisement in this connection's authRequest. It is a
+    /// per-connection property: never derived from a prior connection, a stored capability,
+    /// or the paired-device record.
+    private(set) var negotiatedAudioCodec: BeamAudioCodec = .pcmFloat32
+
     private var sharedSecret: SymmetricKey?
     private(set) var authenticatedDeviceID: String?
     private var isTerminated = false
@@ -58,17 +65,20 @@ final class StreamSession {
 
     /// Audio gets its own, higher ceiling and is checked separately.
     ///
-    /// Audio is uncompressed Float32 stereo PCM — 44100 x 2ch x 4B = 352,800 B/s = 2.82 Mbps,
-    /// constant, and completely independent of the video preset (ScreenCapture.swift:219-221,
-    /// AudioEncoder is a passthrough despite Protocol.swift calling packet 0x02 an "AAC chunk").
-    /// At 360p30 that is 65% of everything we send.
+    /// HISTORY (BEAM-21): audio used to be uncompressed Float32 stereo PCM — 44100 x 2ch x 4B =
+    /// 352,800 B/s = 2.82 Mbps, constant and completely independent of the video preset. At
+    /// 360p30 that was 65% of everything we sent. Because sendTCP counts every byte but only
+    /// video consulted the counter, 0.56s of PCM was enough to pin inFlightBytes above the
+    /// video threshold permanently: every delta frame was dropped for the rest of the session
+    /// while forced IDRs kept flowing — the 2 fps keyframe slideshow.
     ///
-    /// Because sendTCP counts every byte but only video consulted the counter, 0.56s of PCM was
-    /// enough to pin inFlightBytes above the video threshold permanently: every delta frame was
-    /// dropped for the rest of the session while forced IDRs kept flowing. That is the 2 fps
-    /// keyframe slideshow — the backpressure was throttling the minority of the traffic to
-    /// protect the hog.
-    private let maxQueuedAudioBytes = 288 * 1024
+    /// Clients that advertise AAC-LC now get ~128 kbps instead, so audio is a few percent of
+    /// the link rather than the majority of it. That also means this ceiling is ~17 s of AAC
+    /// rather than 0.8 s of PCM, i.e. AAC sessions effectively never shed audio — which is
+    /// correct at that share of the link. Legacy PCM sessions keep the old behaviour.
+    private var maxQueuedAudioBytes: Int {
+        negotiatedAudioCodec == .aacLC ? 64 * 1024 : 288 * 1024
+    }
     private var droppedAudioChunks = 0
     private var heartbeatTimer: DispatchSourceTimer?
     private var lastPongReceivedAt = Date()
@@ -205,6 +215,15 @@ final class StreamSession {
             return
         }
 
+        // Audio codec negotiation (BEAM-22). Absence of the field means a client that predates
+        // negotiation and can only decode Float32 PCM — feeding it AAC bytes would be
+        // full-scale white noise, so absence is never treated optimistically. An empty array
+        // means exactly the same thing as ["pcm_f32le"], never "anything goes".
+        let advertised = message.supportedAudioCodecs ?? []
+        let forcePCM = UserDefaults.standard.bool(forKey: BeamAudioCodec.forcePCMDefaultsKey)
+        negotiatedAudioCodec = (!forcePCM && advertised.contains(BeamAudioCodec.aacLC.wireName))
+            ? .aacLC : .pcmFloat32
+
         // Success
         isAuthenticated = true
         sharedSecret = SymmetricKey(data: device.sharedSecret)
@@ -216,11 +235,12 @@ final class StreamSession {
             type: .authSuccess, deviceName: Host.current().localizedName,
             deviceID: nil, code: nil, sharedSecret: nil, error: nil,
             tailscaleHosts: TailscaleAddress.advertisedHosts(),
-            supportsRemoteAccess: true
+            supportsRemoteAccess: true,
+            selectedAudioCodec: negotiatedAudioCodec.wireName
         ))
 
         server?.sessionAuthenticated(self, deviceName: device.name)
-        logger.info("Session authenticated for device '\(device.name)'")
+        logger.info("Session authenticated for device '\(device.name)' — audio codec \(self.negotiatedAudioCodec.wireName)")
     }
 
     private func handleHello(_ message: BeamPairingMessage) {
@@ -402,8 +422,11 @@ final class StreamSession {
 
     // MARK: - Send Audio
 
-    func send(audioData: Data, pts: CMTime) {
-        guard isAuthenticated else { return }
+    func send(audioData: Data, codec: BeamAudioCodec, pts: CMTime) {
+        // Belt and braces: StreamServer already fans each representation out only to the
+        // sessions that negotiated it, but a fan-out bug must never be able to put AAC bytes
+        // on a legacy wire — that is white noise into someone's headphones, not a glitch.
+        guard isAuthenticated, codec == negotiatedAudioCodec else { return }
 
         // Audio must be able to shed load too, or it starves video off the link entirely.
         // Its ceiling is deliberately higher than video's: dropped audio splices rather than
@@ -428,7 +451,13 @@ final class StreamSession {
         )
         var payload = audioHeader.serialized()
         payload.append(audioData)
-        sendUDP(type: .audio, flags: 0, payload: payload)
+        // Audio has no fragmentation path and none is being added; an over-cap payload would
+        // be silently truncated/mis-framed at the receiver, so drop it instead.
+        guard payload.count <= kMaxUDPPayload else {
+            logger.error("Dropping oversized audio payload (\(payload.count) B > \(kMaxUDPPayload))")
+            return
+        }
+        sendUDP(type: .audio, flags: codec.packetFlags, payload: payload)
     }
 
     // MARK: - Network Send Helpers
