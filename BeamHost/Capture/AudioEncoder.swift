@@ -59,7 +59,15 @@ final class AudioEncoder {
     private var aacOutputAUIndex: Int64 = 0
     private var aacInputFramesFed: Int64 = 0
     private var pendingPCM = Data()
+    /// AAC encoding is disabled while this is true. It used to be a life sentence — cleared
+    /// only by start()/stop() — so a single transient FillComplexBuffer error killed audio for
+    /// every AAC client until the last one disconnected. It is now a retry with backoff
+    /// (see `noteAACFailure` / the retry check in `processSampleBuffer`).
     private var _aacFailed = false
+    private var _aacFailedAt: Date?
+    private var _aacFailureCount = 0
+    private static let maxAACRetries = 20
+    private static let aacRetryBackoff: TimeInterval = 2.0
     private var _isAACOutputEnabled = false
     private var requestedBitrate: Int = 128_000
     private var lastAppliedBitrate: Int = 0
@@ -106,7 +114,7 @@ final class AudioEncoder {
         guard !isRunning else { return }
         isRunning = true
         encoderQueue.async { [weak self] in
-            self?._aacFailed = false
+            self?.clearAACFailure()
         }
         logger.info("AudioEncoder started (Float32 PCM + optional AAC-LC)")
     }
@@ -119,7 +127,7 @@ final class AudioEncoder {
         encoderQueue.async { [weak self] in
             guard let self else { return }
             self.teardownAACConverter()
-            self._aacFailed = false
+            self.clearAACFailure()
         }
         logger.info("AudioEncoder stopped")
     }
@@ -147,7 +155,20 @@ final class AudioEncoder {
         publishFormatIfNeeded(sampleRate: extracted.sampleRate, channels: extracted.channels)
         delegate?.audioEncoder(self, didProducePCMChunk: extracted.data, presentationTime: pts)
 
-        guard _isAACOutputEnabled, !_aacFailed else { return }
+        guard _isAACOutputEnabled else { return }
+        if _aacFailed {
+            // Retry rather than stay dead forever. AAC-LC access units are independently
+            // decodable, so a fresh converter resyncs immediately; the client re-anchors on the
+            // PTS discontinuity via its own resync path.
+            guard let failedAt = _aacFailedAt,
+                  Date().timeIntervalSince(failedAt) >= Self.aacRetryBackoff,
+                  _aacFailureCount <= Self.maxAACRetries else { return }
+            logger.info("Retrying AAC encoding after failure #\(self._aacFailureCount)")
+            _aacFailed = false
+            _aacFailedAt = nil
+            aacNeedsAnchor = true
+            teardownAACConverter()
+        }
         encodeAAC(
             pcm: extracted.data,
             sampleRate: extracted.sampleRate,
@@ -303,6 +324,25 @@ final class AudioEncoder {
     // frames EARLIER than its nominal position, which cancels the delay exactly. The client
     // performs no trimming and no compensation at all — doing so would double-correct.
 
+    /// encoderQueue only. Disables AAC output temporarily and schedules a retry.
+    private func noteAACFailure(reason: String) {
+        _aacFailed = true
+        _aacFailedAt = Date()
+        _aacFailureCount += 1
+        if _aacFailureCount > Self.maxAACRetries {
+            logger.error("AAC failure (\(reason)) #\(self._aacFailureCount) — retry budget exhausted, staying on PCM")
+        } else {
+            logger.error("AAC failure (\(reason)) #\(self._aacFailureCount) — retrying in \(Self.aacRetryBackoff)s")
+        }
+    }
+
+    /// encoderQueue only.
+    private func clearAACFailure() {
+        _aacFailed = false
+        _aacFailedAt = nil
+        _aacFailureCount = 0
+    }
+
     private func encodeAAC(pcm: Data, sampleRate: Double, channels: Int, inputPTSUs: Int64) {
         let safeChannels = max(1, channels)
         guard sampleRate > 0, !pcm.isEmpty else { return }
@@ -311,8 +351,7 @@ final class AudioEncoder {
         if aacConverter == nil || sampleRate != aacSourceSampleRate || safeChannels != aacSourceChannels {
             teardownAACConverter()
             guard setupAACConverter(sampleRate: sampleRate, channels: safeChannels) else {
-                _aacFailed = true
-                logger.error("AAC converter setup failed — this stream stays on PCM for all clients")
+                noteAACFailure(reason: "converter setup failed")
                 return
             }
         }
@@ -376,8 +415,7 @@ final class AudioEncoder {
             }
 
             if status != noErr && status != kBeamConverterStarveError {
-                logger.error("AAC encode failed (\(status)) — degrading this stream to PCM permanently")
-                _aacFailed = true
+                noteAACFailure(reason: "FillComplexBuffer status \(status)")
                 teardownAACConverter()
                 return
             }

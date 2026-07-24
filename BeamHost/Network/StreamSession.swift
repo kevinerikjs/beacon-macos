@@ -54,9 +54,25 @@ final class StreamSession {
     // Live video must drop late frames rather than buffer them. We track bytes handed to the
     // Network framework but not yet written, and once that exceeds roughly a second of the
     // current bitrate we discard non-keyframe video instead of enqueueing it.
-    private var inFlightBytes = 0
+    //
+    // ACCOUNTING (BEAM-24): the counters below are mutated from at least three threads — the
+    // VideoToolbox output callback (video sends), AudioEncoder.encoderQueue (audio sends) and
+    // sendQueue (send completions). The old code asserted they all ran on sendQueue and used a
+    // bare `+=`; they do not, and a lost decrement permanently inflated the backlog, which with
+    // the old shared-counter gate meant audio was switched off for the rest of the session.
+    // Every read and write now goes through `backlogLock`, and the counters are re-anchored to
+    // zero whenever nothing is outstanding so drift can never accumulate.
+    private let backlogLock = NSLock()
+    private var inFlightBytes = 0        // total (video + audio + control), guarded
+    private var inFlightAudioBytes = 0   // audio only, guarded
+    private var outstandingSends = 0     // guarded
     private var droppedFrames = 0
     private var lastDropLogAt = Date.distantPast
+    /// Wall-clock time of the last audio chunk actually handed to the connection. Audio must
+    /// never be silent for longer than `maxAudioDropWindow` while the encoder is producing,
+    /// no matter what the backlog counters say — see `send(audioData:codec:pts:)`.
+    private var lastAudioSentAt = Date.distantPast
+    private let maxAudioDropWindow: TimeInterval = 1.0
 
     /// Backlog above which non-keyframe video is dropped. ~192 KB is about a second at
     /// 1.5 Mbps and a quarter-second at 6 Mbps, so it stays small enough to keep latency
@@ -76,6 +92,14 @@ final class StreamSession {
     /// the link rather than the majority of it. That also means this ceiling is ~17 s of AAC
     /// rather than 0.8 s of PCM, i.e. AAC sessions effectively never shed audio — which is
     /// correct at that share of the link. Legacy PCM sessions keep the old behaviour.
+    ///
+    /// BEAM-24: that reasoning was only ever true against an AUDIO-ONLY counter, and this
+    /// ceiling used to be checked against the SHARED one, which is ~97% video bytes. Video's
+    /// own drop gate is a control loop whose set point is `maxQueuedMediaBytes` (192 KB), so on
+    /// any link that cannot absorb the encoder instantly the shared counter parks at ~192 KB —
+    /// three times this ceiling. Audio was then dropped on every single call, indefinitely,
+    /// while video kept flowing: total silence with perfect video, recovered only by a
+    /// reconnect. This is now compared against `inFlightAudioBytes` only.
     private var maxQueuedAudioBytes: Int {
         negotiatedAudioCodec == .aacLC ? 64 * 1024 : 288 * 1024
     }
@@ -396,12 +420,14 @@ final class StreamSession {
         // Drop rather than queue when the link is already behind. Keyframes are exempt:
         // dropping one strands the decoder until the next IDR, which is a far worse artefact
         // than a skipped delta frame.
-        if !isKeyframe, inFlightBytes > maxQueuedMediaBytes {
+        // Video yields to the TOTAL backlog (it is the bulk of it, and it is what must give way
+        // so audio and control keep flowing).
+        if !isKeyframe, currentBacklog().total > maxQueuedMediaBytes {
             droppedFrames += 1
             let now = Date()
             if now.timeIntervalSince(lastDropLogAt) >= 5 {
                 lastDropLogAt = now
-                logger.info("Dropping video to keep latency bounded (\(self.droppedFrames) frames, backlog \(self.inFlightBytes / 1024)KB)")
+                logger.info("Dropping video to keep latency bounded (\(self.droppedFrames) frames, backlog \(self.currentBacklog().total / 1024)KB)")
             }
             return
         }
@@ -451,15 +477,27 @@ final class StreamSession {
         // Its ceiling is deliberately higher than video's: dropped audio splices rather than
         // gapping (the receiver reorders by sequence but never inserts silence), so it should
         // only ever give way when the link is genuinely unable to carry it.
-        if inFlightBytes > maxQueuedAudioBytes {
-            droppedAudioChunks += 1
-            let now = Date()
-            if now.timeIntervalSince(lastDropLogAt) >= 5 {
-                lastDropLogAt = now
-                logger.info("Dropping audio, link saturated (\(self.droppedAudioChunks) chunks, backlog \(self.inFlightBytes / 1024)KB)")
+        //
+        // Gated on the AUDIO backlog only (BEAM-24). At 128 kbps AAC, 64 KB is ~4 s of audio,
+        // so this only ever fires on a link that genuinely cannot carry 128 kbps at all.
+        let backlog = currentBacklog()
+        let now = Date()
+        if backlog.audio > maxQueuedAudioBytes {
+            // Hard liveness guarantee: audio may be shed, but never for longer than
+            // `maxAudioDropWindow`. Admitting ~128 kbps onto a saturated link cannot recreate
+            // the BEAM-21 latency blowup (that was 2.82 Mbps of PCM), and it makes "audio dead
+            // for the rest of the session" structurally impossible on the host side.
+            if now.timeIntervalSince(lastAudioSentAt) <= maxAudioDropWindow {
+                droppedAudioChunks += 1
+                if now.timeIntervalSince(lastDropLogAt) >= 5 {
+                    lastDropLogAt = now
+                    logger.info("Dropping audio, link saturated (\(self.droppedAudioChunks) chunks, audio backlog \(backlog.audio / 1024)KB, total \(backlog.total / 1024)KB)")
+                }
+                return
             }
-            return
+            logger.warning("Audio backlog \(backlog.audio / 1024)KB over ceiling but silent for >\(self.maxAudioDropWindow)s — sending anyway to guarantee liveness")
         }
+        lastAudioSentAt = now
 
         let seqNum = audioSequenceNumber
         audioSequenceNumber &+= 1
@@ -481,14 +519,36 @@ final class StreamSession {
 
     // MARK: - Network Send Helpers
 
-    private func sendTCP(_ data: Data) {
+    /// Thread-safe snapshot of the send backlog.
+    private func currentBacklog() -> (total: Int, audio: Int) {
+        backlogLock.lock(); defer { backlogLock.unlock() }
+        return (inFlightBytes, inFlightAudioBytes)
+    }
+
+    private func sendTCP(_ data: Data, isAudio: Bool = false) {
         let byteCount = data.count
+        backlogLock.lock()
         inFlightBytes += byteCount
+        if isAudio { inFlightAudioBytes += byteCount }
+        outstandingSends += 1
+        backlogLock.unlock()
+
         connection.send(content: data, completion: .contentProcessed { [weak self] error in
             guard let self else { return }
-            // contentProcessed fires on the connection's queue (sendQueue), the same queue the
-            // send path runs on, so this counter needs no additional synchronisation.
+            self.backlogLock.lock()
             self.inFlightBytes -= byteCount
+            if isAudio { self.inFlightAudioBytes -= byteCount }
+            self.outstandingSends -= 1
+            // Re-anchor whenever the connection has fully drained. Any drift accumulated by a
+            // torn read-modify-write (or a completion that never fired) is erased here, so the
+            // counters can never latch above a drop threshold and silence a stream forever.
+            if self.outstandingSends <= 0 {
+                self.outstandingSends = 0
+                self.inFlightBytes = 0
+                self.inFlightAudioBytes = 0
+            }
+            self.backlogLock.unlock()
+
             if let error {
                 logger.error("TCP send error: \(error)")
                 self.disconnect()
@@ -503,7 +563,7 @@ final class StreamSession {
 
         // Send over the TCP connection using the framing layer for reliability
         // In v2 we can upgrade to actual UDP; for MVP TCP is simpler and sufficient on LAN
-        sendTCP(packet.lengthPrefixed())
+        sendTCP(packet.lengthPrefixed(), isAudio: type == .audio)
     }
 }
 
