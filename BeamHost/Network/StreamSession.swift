@@ -32,6 +32,29 @@ final class StreamSession {
     private var audioSequenceNumber: UInt32 = 0
 
     private let sendQueue = DispatchQueue(label: "com.beam.session.send", qos: .userInteractive)
+
+    // MARK: - Send backpressure (BEAM-21)
+    //
+    // All media travels over the TCP control connection (see sendUDP, a misnomer). On a LAN
+    // that is harmless because bandwidth vastly exceeds bitrate. Over a constrained link —
+    // cellular, or a DERP-relayed tailnet — it is fatal: TCP never drops, so once the encoder
+    // outpaces the link every frame is queued rather than discarded. Latency then grows
+    // without bound and NEVER recovers, because the backlog has to be drained before anything
+    // current is displayed. That is the "2 fps from 10 seconds ago" failure, and it is also
+    // why lowering the quality preset didn't help — a lower bitrate doesn't drain a backlog
+    // that has already formed.
+    //
+    // Live video must drop late frames rather than buffer them. We track bytes handed to the
+    // Network framework but not yet written, and once that exceeds roughly a second of the
+    // current bitrate we discard non-keyframe video instead of enqueueing it.
+    private var inFlightBytes = 0
+    private var droppedFrames = 0
+    private var lastDropLogAt = Date.distantPast
+
+    /// Backlog above which non-keyframe video is dropped. ~192 KB is about a second at
+    /// 1.5 Mbps and a quarter-second at 6 Mbps, so it stays small enough to keep latency
+    /// bounded without dropping on brief, normal bursts.
+    private let maxQueuedMediaBytes = 192 * 1024
     private var heartbeatTimer: DispatchSourceTimer?
     private var lastPongReceivedAt = Date()
     private let heartbeatTimeout: TimeInterval = 12
@@ -316,6 +339,19 @@ final class StreamSession {
     func send(videoData: Data, pts: CMTime, isKeyframe: Bool) {
         guard isAuthenticated else { return }
 
+        // Drop rather than queue when the link is already behind. Keyframes are exempt:
+        // dropping one strands the decoder until the next IDR, which is a far worse artefact
+        // than a skipped delta frame.
+        if !isKeyframe, inFlightBytes > maxQueuedMediaBytes {
+            droppedFrames += 1
+            let now = Date()
+            if now.timeIntervalSince(lastDropLogAt) >= 5 {
+                lastDropLogAt = now
+                logger.info("Dropping video to keep latency bounded (\(self.droppedFrames) frames, backlog \(self.inFlightBytes / 1024)KB)")
+            }
+            return
+        }
+
         let frameNum = videoFrameNumber
         videoFrameNumber &+= 1
 
@@ -369,10 +405,16 @@ final class StreamSession {
     // MARK: - Network Send Helpers
 
     private func sendTCP(_ data: Data) {
+        let byteCount = data.count
+        inFlightBytes += byteCount
         connection.send(content: data, completion: .contentProcessed { [weak self] error in
+            guard let self else { return }
+            // contentProcessed fires on the connection's queue (sendQueue), the same queue the
+            // send path runs on, so this counter needs no additional synchronisation.
+            self.inFlightBytes -= byteCount
             if let error {
                 logger.error("TCP send error: \(error)")
-                self?.disconnect()
+                self.disconnect()
             }
         })
     }
