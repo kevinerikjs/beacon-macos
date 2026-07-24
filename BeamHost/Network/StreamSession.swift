@@ -82,7 +82,18 @@ final class StreamSession {
     private var droppedAudioChunks = 0
     private var heartbeatTimer: DispatchSourceTimer?
     private var lastPongReceivedAt = Date()
-    private let heartbeatTimeout: TimeInterval = 12
+    /// Heartbeat grace before the host kills a session.
+    ///
+    /// Was 12s, which killed healthy sessions every 30-60s on a congested remote link:
+    /// heartbeats and pongs travel on the SAME TCP connection as media, so when a backlog
+    /// forms the pong queues behind video frames (head-of-line blocking) and arrives late
+    /// even though the client is alive and streaming. The host then disconnected, the client
+    /// reconnected, and the cycle repeated — which is what the diagnostic logs show.
+    ///
+    /// 30s is still well inside the client's own stall detection (8s foreground / 22s PiP),
+    /// so genuinely dead connections are still caught quickly, just by the side that can tell
+    /// the difference between "silent" and "slow".
+    private let heartbeatTimeout: TimeInterval = 30
 
     init(connection: NWConnection, server: StreamServer) {
         self.connection = connection

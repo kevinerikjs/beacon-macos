@@ -217,7 +217,12 @@ final class ScreenCapture: NSObject {
         config.scalesToFit = true
         config.showsCursor = true
         config.capturesAudio = captureAudio
-        config.sampleRate = 44100
+        // 48kHz, not 44.1kHz: it is what ScreenCaptureKit actually delivers regardless of what
+        // we ask for, AND it is the iPhone's native hardware rate. Matching them end to end
+        // means the sample rate is never converted anywhere in the chain — not by SCK, not by
+        // the AAC encoder, not by AVAudioEngine on the client. Asking for 44100 only created a
+        // mismatch between stated intent and reality.
+        config.sampleRate = 48000
         config.channelCount = 2
 
         if let normalizedLockedViewport {
