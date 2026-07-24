@@ -389,6 +389,13 @@ struct BeamPairingMessage: Codable {
     /// Optional, like every other field here, so old and new peers interoperate in both
     /// directions with no version negotiation. Keep in sync with beam-ios Protocol.swift.
     var tailscaleHosts: [String]? = nil
+
+    /// macOS → iOS. Always true from this version on. Its ABSENCE is the signal that matters:
+    /// a host that omits it predates remote access entirely (BEAM-19), which is a different
+    /// problem from a host that supports it but has no Tailscale installed. Without this the
+    /// phone cannot tell those apart — both just produce an empty `tailscaleHosts` — and would
+    /// tell the user to install Tailscale on a Mac that needs a Beacon update instead.
+    var supportsRemoteAccess: Bool? = nil
 }
 
 // MARK: - Helpers

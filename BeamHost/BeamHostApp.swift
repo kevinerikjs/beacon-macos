@@ -73,7 +73,7 @@ struct BeaconApp: App {
         Settings {
             SettingsView()
                 .environment(appState)
-                .frame(width: 420, height: 400)
+                .frame(width: 420, height: 480)
         }
     }
 }

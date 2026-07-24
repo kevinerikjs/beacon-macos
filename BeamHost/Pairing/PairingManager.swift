@@ -125,7 +125,8 @@ final class PairingManager {
             // Hand the phone our tailnet address at pair time so away-from-home streaming
             // works later without the user configuring anything (BEAM-19). nil when this Mac
             // has no Tailscale — the phone then simply has no remote fallback.
-            tailscaleHosts: TailscaleAddress.advertisedHosts()
+            tailscaleHosts: TailscaleAddress.advertisedHosts(),
+            supportsRemoteAccess: true
         )
         session.sendPairingResponse(successMsg)
 

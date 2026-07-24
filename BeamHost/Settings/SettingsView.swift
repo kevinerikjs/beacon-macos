@@ -24,7 +24,7 @@ struct SettingsView: View {
                 .environment(appState)
         }
         .padding(20)
-        .frame(width: 420, height: 360)
+        .frame(width: 420, height: 440)
     }
 }
 

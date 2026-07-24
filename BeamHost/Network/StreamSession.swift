@@ -177,7 +177,8 @@ final class StreamSession {
         sendPairingResponse(BeamPairingMessage(
             type: .authSuccess, deviceName: Host.current().localizedName,
             deviceID: nil, code: nil, sharedSecret: nil, error: nil,
-            tailscaleHosts: TailscaleAddress.advertisedHosts()
+            tailscaleHosts: TailscaleAddress.advertisedHosts(),
+            supportsRemoteAccess: true
         ))
 
         server?.sessionAuthenticated(self, deviceName: device.name)
