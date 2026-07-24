@@ -286,9 +286,17 @@ final class StreamSession {
         case .pong:
             lastPongReceivedAt = Date()
         case .ping:
+            // Must be wrapped in a BeamPacketHeader like every other control message. This
+            // previously sent bare JSON, which the client discards outright: its receive loop
+            // parses a packet header first and drops anything whose magic doesn't match. The
+            // pong therefore never arrived, so the client's RTT probe never completed and its
+            // link-quality badge sat on "Connecting…" forever.
             let pong = BeamControlMessage(type: .pong, payload: nil)
             if let data = try? JSONEncoder().encode(pong) {
-                sendTCP(data.lengthPrefixed())
+                let header = BeamPacketHeader(type: .control, flags: 0, payloadLength: UInt32(data.count))
+                var packet = header.serialized()
+                packet.append(data)
+                sendTCP(packet.lengthPrefixed())
             }
         case .streamStop:
             logger.info("Client requested stream stop")
