@@ -189,6 +189,19 @@ final class ScreenCapture: NSObject {
         logger.info("ScreenCapture returned to full display")
     }
 
+    /// Sample rate the client asked for at auth (BEAM-29), applied to every capture
+    /// configuration. Defaults to 48kHz, which is what ScreenCaptureKit delivers anyway and
+    /// what iPhone hardware runs natively, so the common case needs no negotiation at all.
+    private(set) var requestedAudioSampleRate: Double = 48_000
+
+    /// Applies a client-requested rate. Only takes effect on the next capture configuration,
+    /// which is deliberate: changing it under a live SCStream would force the client to
+    /// renegotiate its engine, which is the exact churn this is meant to remove.
+    func setRequestedAudioSampleRate(_ rate: Double) {
+        guard rate != requestedAudioSampleRate else { return }
+        requestedAudioSampleRate = rate
+    }
+
     /// Crop full-display capture to a normalized viewport rect (0...1 space).
     /// Pass nil to return to uncropped full-display capture.
     func setLockedViewport(_ normalizedRect: CGRect?) async throws {
@@ -222,7 +235,7 @@ final class ScreenCapture: NSObject {
         // means the sample rate is never converted anywhere in the chain — not by SCK, not by
         // the AAC encoder, not by AVAudioEngine on the client. Asking for 44100 only created a
         // mismatch between stated intent and reality.
-        config.sampleRate = 48000
+        config.sampleRate = Int(requestedAudioSampleRate)
         config.channelCount = 2
 
         if let normalizedLockedViewport {

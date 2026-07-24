@@ -269,6 +269,11 @@ final class StreamServer {
         qualityManager.receiveQualityFeedback(quality)
     }
 
+    /// Records the audio sample rate a client asked for at auth (BEAM-29).
+    func setPreferredAudioSampleRate(_ rate: Double) {
+        screenCapture.setRequestedAudioSampleRate(rate)
+    }
+
     func handleQualityRequest(_ preset: StreamQualityPreset) {
         qualityManager.handleQualityRequest(preset)
     }

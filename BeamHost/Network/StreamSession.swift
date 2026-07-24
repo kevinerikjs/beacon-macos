@@ -254,6 +254,15 @@ final class StreamSession {
         // negotiation and can only decode Float32 PCM — feeding it AAC bytes would be
         // full-scale white noise, so absence is never treated optimistically. An empty array
         // means exactly the same thing as ["pcm_f32le"], never "anything goes".
+        // Honour the client's requested audio rate so it never has to renegotiate mid-session
+        // (BEAM-29). Clamped to rates ScreenCaptureKit will actually produce; anything else
+        // falls back to the existing behaviour of the host choosing.
+        if let requested = message.preferredAudioSampleRate,
+           [44_100.0, 48_000.0].contains(requested) {
+            server?.setPreferredAudioSampleRate(requested)
+            logger.info("Client requested audio sample rate \(Int(requested))Hz")
+        }
+
         let advertised = message.supportedAudioCodecs ?? []
         let forcePCM = UserDefaults.standard.bool(forKey: BeamAudioCodec.forcePCMDefaultsKey)
         negotiatedAudioCodec = (!forcePCM && advertised.contains(BeamAudioCodec.aacLC.wireName))
