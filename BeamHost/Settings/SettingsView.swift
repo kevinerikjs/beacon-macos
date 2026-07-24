@@ -248,9 +248,50 @@ struct PairedDevicesTab: View {
                     .buttonStyle(.bordered)
                 }
             }
+
+            remoteAccessSection
         }
         .padding(.vertical, 8)
     }
+
+    // MARK: - Remote access (BEAM-19)
+
+    /// Shows this Mac's Tailscale address so it can be entered by hand on an iPhone that
+    /// paired before Tailscale was set up. Paired devices normally receive this automatically,
+    /// so this is a fallback and a diagnostic — hidden entirely when there's no tailnet, to
+    /// avoid advertising a feature the user hasn't got.
+    @ViewBuilder
+    private var remoteAccessSection: some View {
+        if let address = tailscaleAddress {
+            Divider()
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Remote Access")
+                    .font(.callout.weight(.semibold))
+                HStack(spacing: 8) {
+                    Text(address)
+                        .font(.system(.callout, design: .monospaced))
+                        .textSelection(.enabled)
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(address, forType: .string)
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Copy address")
+                }
+                Text("Paired iPhones get this automatically and use it when they're away from "
+                     + "your network. Both devices must be signed in to the same Tailscale account.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    /// Read once per view construction rather than polled — the address is stable while
+    /// Tailscale is connected, and the settings window is short-lived.
+    private var tailscaleAddress: String? { TailscaleAddress.current() }
 }
 
 // MARK: - Layout Helpers

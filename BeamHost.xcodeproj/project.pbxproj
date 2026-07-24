@@ -16,6 +16,7 @@
 		BEA0C0DECAFE000000000002 /* VirtualGamepad.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEA0C0DECAFE000000000001 /* VirtualGamepad.swift */; };
 		3EE41EA4D46235B4167EE1DF /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E5D21F7318EDD34ABD76A53 /* AppState.swift */; };
 		4434A132FF6710CE527CDD38 /* BonjourAdvertiser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94D2C730E21206AB82749ADA /* BonjourAdvertiser.swift */; };
+		BEA0C0DECAFE00000000T002 /* TailscaleAddress.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEA0C0DECAFE00000000T001 /* TailscaleAddress.swift */; };
 		51D7D41756CEA841B063E041 /* ScreenCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1B2DB83604ED6F3F83F2353 /* ScreenCapture.swift */; };
 		59C3B6B520AEC42A64748058 /* VideoEncoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2FD95D0D3E09666CAA7C8A8F /* VideoEncoder.swift */; };
 		61062B6FC68166DEEE0D3136 /* Network.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C3797345DBECAB19AA008F86 /* Network.framework */; };
@@ -72,6 +73,7 @@
 		7C66AF734545AF788DD49158 /* DisplayPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = DisplayPicker.swift; path = BeamHost/Settings/DisplayPicker.swift; sourceTree = SOURCE_ROOT; };
 		8824943B0921A89297749477 /* PairingManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PairingManager.swift; path = BeamHost/Pairing/PairingManager.swift; sourceTree = SOURCE_ROOT; };
 		94D2C730E21206AB82749ADA /* BonjourAdvertiser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = BonjourAdvertiser.swift; path = BeamHost/Network/BonjourAdvertiser.swift; sourceTree = SOURCE_ROOT; };
+		BEA0C0DECAFE00000000T001 /* TailscaleAddress.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TailscaleAddress.swift; path = BeamHost/Network/TailscaleAddress.swift; sourceTree = SOURCE_ROOT; };
 		A0ED849CFAD1653E27680111 /* Protocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = Protocol.swift; path = BeamHost/Network/Protocol.swift; sourceTree = SOURCE_ROOT; };
 		AD6CBD24C7158E374A454127 /* AVFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFoundation.framework; path = System/Library/Frameworks/AVFoundation.framework; sourceTree = SDKROOT; };
 		B8B9925E7AEEDD84380773FA /* ServiceManagement.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ServiceManagement.framework; path = System/Library/Frameworks/ServiceManagement.framework; sourceTree = SDKROOT; };
@@ -189,6 +191,7 @@
 			children = (
 				A0ED849CFAD1653E27680111 /* Protocol.swift */,
 				94D2C730E21206AB82749ADA /* BonjourAdvertiser.swift */,
+				BEA0C0DECAFE00000000T001 /* TailscaleAddress.swift */,
 				51426D37347E81FF12533723 /* StreamServer.swift */,
 				3C29E415777A934B56667281 /* StreamSession.swift */,
 				51A6E292D2C537497C59F849 /* ControlChannel.swift */,
@@ -322,6 +325,7 @@
 				D4B8E923A15F67C0498EA231 /* VideoQualityManager.swift in Sources */,
 				95B7C5156A66D1F5A6F34F12 /* Protocol.swift in Sources */,
 				4434A132FF6710CE527CDD38 /* BonjourAdvertiser.swift in Sources */,
+				BEA0C0DECAFE00000000T002 /* TailscaleAddress.swift in Sources */,
 				AB14914A15ECF1490C8B45CA /* StreamServer.swift in Sources */,
 				006BC1271BA976BAC9341DCE /* StreamSession.swift in Sources */,
 				3D114FF7D36F1E09951F2B08 /* ControlChannel.swift in Sources */,

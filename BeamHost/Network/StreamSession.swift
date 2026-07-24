@@ -172,9 +172,12 @@ final class StreamSession {
         sharedSecret = SymmetricKey(data: device.sharedSecret)
         authenticatedDeviceID = deviceID
 
+        // Re-advertise our tailnet address on every auth, not just at pairing: this is how the
+        // phone's stored remote address self-heals if our Tailscale IP ever changes (BEAM-19).
         sendPairingResponse(BeamPairingMessage(
             type: .authSuccess, deviceName: Host.current().localizedName,
-            deviceID: nil, code: nil, sharedSecret: nil, error: nil
+            deviceID: nil, code: nil, sharedSecret: nil, error: nil,
+            tailscaleHosts: TailscaleAddress.advertisedHosts()
         ))
 
         server?.sessionAuthenticated(self, deviceName: device.name)
