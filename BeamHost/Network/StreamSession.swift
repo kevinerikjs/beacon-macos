@@ -534,7 +534,53 @@ final class StreamSession {
         return (inFlightBytes, inFlightAudioBytes)
     }
 
-    private func sendTCP(_ data: Data, isAudio: Bool = false) {
+    // MARK: - Priority send queue (BEAM-31)
+    //
+    // Everything shares one TCP connection, so ORDER IS LATENCY: a packet written after a
+    // 100KB keyframe waits for all of it to drain. On a LAN that is microseconds. On a
+    // constrained tailnet it is seconds, and audio inherits that delay.
+    //
+    // That is one half of why audio ran ~2s behind video remotely (the other half being that
+    // video sheds frames under congestion while audio does not, so audio accumulates the
+    // delay it could not deliver on time). Audio is ~96kbps against megabits of video, so
+    // letting it jump the queue costs video almost nothing and stops the offset forming
+    // rather than absorbing it after the fact.
+    //
+    // Writes are serialised through this queue so ordering is ours to decide, not a race
+    // between call sites.
+    private var pendingAudio: [Data] = []
+    private var pendingVideo: [Data] = []
+    private var isWriting = false
+
+    private func enqueueSend(_ data: Data, isAudio: Bool) {
+        backlogLock.lock()
+        if isAudio { pendingAudio.append(data) } else { pendingVideo.append(data) }
+        backlogLock.unlock()
+        drainSendQueue()
+    }
+
+    /// Writes one buffer at a time, audio first, so a queued keyframe can never delay audio.
+    private func drainSendQueue() {
+        backlogLock.lock()
+        guard !isWriting else { backlogLock.unlock(); return }
+        let isAudio = !pendingAudio.isEmpty
+        guard let next = isAudio ? pendingAudio.first : pendingVideo.first else {
+            backlogLock.unlock(); return
+        }
+        if isAudio { pendingAudio.removeFirst() } else { pendingVideo.removeFirst() }
+        isWriting = true
+        backlogLock.unlock()
+
+        sendTCP(next, isAudio: isAudio) { [weak self] in
+            guard let self else { return }
+            self.backlogLock.lock()
+            self.isWriting = false
+            self.backlogLock.unlock()
+            self.drainSendQueue()
+        }
+    }
+
+    private func sendTCP(_ data: Data, isAudio: Bool = false, onComplete: (() -> Void)? = nil) {
         let byteCount = data.count
         backlogLock.lock()
         inFlightBytes += byteCount
@@ -551,6 +597,7 @@ final class StreamSession {
             // Re-anchor whenever the connection has fully drained. Any drift accumulated by a
             // torn read-modify-write (or a completion that never fired) is erased here, so the
             // counters can never latch above a drop threshold and silence a stream forever.
+            defer { onComplete?() }
             if self.outstandingSends <= 0 {
                 self.outstandingSends = 0
                 self.inFlightBytes = 0
@@ -570,9 +617,10 @@ final class StreamSession {
         var packet = header.serialized()
         packet.append(payload)
 
-        // Send over the TCP connection using the framing layer for reliability
-        // In v2 we can upgrade to actual UDP; for MVP TCP is simpler and sufficient on LAN
-        sendTCP(packet.lengthPrefixed(), isAudio: type == .audio)
+        // Media goes through the priority queue so audio is never stuck behind a keyframe.
+        // Control messages keep writing directly: they are tiny, latency-critical in their own
+        // right (heartbeats, auth), and must not be reordered behind queued media.
+        enqueueSend(packet.lengthPrefixed(), isAudio: type == .audio)
     }
 }
 
