@@ -280,6 +280,7 @@ final class StreamSession {
             deviceID: nil, code: nil, sharedSecret: nil, error: nil,
             tailscaleHosts: TailscaleAddress.advertisedHosts(),
             supportsRemoteAccess: true,
+            supportsVideoHold: true,
             selectedAudioCodec: negotiatedAudioCodec.wireName
         ))
 
@@ -327,6 +328,12 @@ final class StreamSession {
         case .videoResume:
             videoPaused = false
             logger.info("Video resumed by client")
+            // Releasing the hold is not enough on its own (BEAM-21). Everything encoded while
+            // it was held was dropped — including the IDR that opened this session — so the
+            // client's decoder has no reference frame, and the encoder considers its parameter
+            // sets already sent, so it never restates them. Left alone the stream stays black
+            // for its whole life. Restate the parameter sets and force a fresh IDR.
+            server?.clientReleasedVideoHold(self)
         case .ping:
             // Must be wrapped in a BeamPacketHeader like every other control message. This
             // previously sent bare JSON, which the client discards outright: its receive loop

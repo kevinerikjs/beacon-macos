@@ -124,8 +124,14 @@ final class VideoEncoder {
             height = Int32(preset.height)
             frameRate = preset.fps
             bitrateBps = Int(preset.bitrateMbps * 1_000_000)
-            try? startInternal()
-            logger.info("VideoEncoder reconfigured → \(preset.width)x\(preset.height) @\(Int(preset.fps))fps")
+            // Never swallow this: a failed restart leaves the pipeline running with no encoder,
+            // which reaches the user as a permanently black stream and nothing in the log.
+            do {
+                try startInternal()
+                logger.info("VideoEncoder reconfigured → \(preset.width)x\(preset.height) @\(Int(preset.fps))fps")
+            } catch {
+                logger.error("VideoEncoder reconfigure FAILED at \(preset.width)x\(preset.height): \(error)")
+            }
         }
     }
 

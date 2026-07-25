@@ -493,6 +493,19 @@ struct BeamPairingMessage: Codable {
     /// tell the user to install Tailscale on a Mac that needs a Beacon update instead.
     var supportsRemoteAccess: Bool? = nil
 
+    /// macOS → iOS. True only on hosts that correctly restart video when the client releases a
+    /// warmup hold (BEAM-21).
+    ///
+    /// A host that accepts `video_pause` but predates that fix strands the client's decoder for
+    /// the whole session: every frame encoded during the hold is dropped, the IDR that opened
+    /// the session with it, and the encoder — already past `parameterSetsSent` — never states
+    /// its parameter sets again. The stream stays black with no error anywhere.
+    ///
+    /// So the absence of this flag means "do not hold video on this host", which is NOT the same
+    /// as "this host doesn't understand video_pause". Warmup is an optimisation; a black stream
+    /// is not a tradeoff worth making for it.
+    var supportsVideoHold: Bool? = nil
+
     /// iOS → macOS. The client's native hardware sample rate, sent at auth (BEAM-29).
     ///
     /// Previously the host chose a rate and the client reacted to audioFormatChanged, which
