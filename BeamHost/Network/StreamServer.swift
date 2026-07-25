@@ -278,6 +278,24 @@ final class StreamServer {
         qualityManager.handleQualityRequest(preset)
     }
 
+    /// A client has released its warmup hold on video (BEAM-21).
+    ///
+    /// Resuming the send path is only half of it. While the hold was on, every encoded frame was
+    /// dropped, and the first of those was the IDR this session opened with — so the client has
+    /// no reference frame to decode against. The encoder won't help either: it emits parameter
+    /// sets once per compression session, and that already happened, so nothing restates them.
+    ///
+    /// The natural keyframe interval does not rescue it in practice, which is what made this look
+    /// like a dead pipeline rather than a stranded decoder. Restate the parameter sets to this
+    /// client and force an IDR so the picture comes back within a frame or two.
+    func clientReleasedVideoHold(_ session: StreamSession) {
+        if let cached = cachedSpsPps {
+            session.send(spsPps: cached)
+        }
+        videoEncoder.requestKeyframe()
+        logger.info("Video hold released — restated parameter sets and requested a keyframe")
+    }
+
     func handleViewportLockRequest(_ payload: BeamViewportLockPayload) {
         if payload.locked {
             pendingLockedViewportRect = CGRect(x: payload.x, y: payload.y, width: payload.width, height: payload.height)

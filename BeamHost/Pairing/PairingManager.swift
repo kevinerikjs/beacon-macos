@@ -126,7 +126,8 @@ final class PairingManager {
             // works later without the user configuring anything (BEAM-19). nil when this Mac
             // has no Tailscale — the phone then simply has no remote fallback.
             tailscaleHosts: TailscaleAddress.advertisedHosts(),
-            supportsRemoteAccess: true
+            supportsRemoteAccess: true,
+            supportsVideoHold: true
         )
         session.sendPairingResponse(successMsg)
 
