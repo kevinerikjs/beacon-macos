@@ -72,8 +72,8 @@ Source code lives in `kevinerikjs/beam-macos` (private). Installer DMGs are publ
 ### Prerequisites
 - **Developer ID Application** cert in keychain: `Developer ID Application: KEVIN ERIK IIN (R4KDRC8S4D)`
   - If missing: Xcode → Settings → Accounts → Manage Certificates → + → Developer ID Application
-- **App Store Connect API key** at `~/Downloads/AuthKey_REDACTED_ASC_KEY_ID.p8`
-  - Key ID: `REDACTED_ASC_KEY_ID`, Issuer ID: `REDACTED_ASC_ISSUER_ID`
+- **App Store Connect API key** at `"$ASC_KEY_PATH"`
+  - Key ID: `$ASC_KEY_ID`, Issuer ID: `$ASC_ISSUER_ID`
 
 ### Full release process (run from `beam-macos/` repo root)
 
@@ -138,9 +138,9 @@ create-dmg --volname "Beacon" --window-size 540 380 --icon-size 128 \
 **4. Notarize the DMG**
 ```bash
 xcrun notarytool submit /tmp/Beacon.dmg \
-  --key ~/Downloads/AuthKey_REDACTED_ASC_KEY_ID.p8 \
-  --key-id REDACTED_ASC_KEY_ID \
-  --issuer REDACTED_ASC_ISSUER_ID \
+  --key "$ASC_KEY_PATH" \
+  --key-id $ASC_KEY_ID \
+  --issuer $ASC_ISSUER_ID \
   --wait
 ```
 Must say `status: Accepted`. If `Invalid`, run `xcrun notarytool log <submission-id> --key ...` to see errors.

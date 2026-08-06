@@ -117,6 +117,31 @@ struct GeneralSettingsTab: View {
                 .buttonStyle(.plain)
             }
 
+            // AGPL section 5 requires an interactive program to display Appropriate Legal
+            // Notices. This is that, and it doubles as the trust signal for an app that holds
+            // Screen Recording permission: the person wondering what Beacon does with their
+            // screen is already here in Settings.
+            settingsGroup(header: "Open Source") {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Beacon is free software, licensed under the GNU Affero General Public License v3.0.")
+                        .font(.callout)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("You can read every line of it, including exactly what it does with your screen.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 12) {
+                        Link("View Source", destination: URL(string: "https://github.com/kevinerikjs/beam-macos")!)
+                        Link("License", destination: URL(string: "https://www.gnu.org/licenses/agpl-3.0.html")!)
+                        Link("Commercial Use", destination: URL(string: "https://github.com/kevinerikjs/beam-macos/blob/main/COMMERCIAL-LICENSE.md")!)
+                    }
+                    .font(.callout)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
             Spacer()
         }
         .padding(.vertical, 4)

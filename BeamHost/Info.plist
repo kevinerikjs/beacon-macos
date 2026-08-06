@@ -2,62 +2,49 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- Bundle Identity -->
-	<key>CFBundleIdentifier</key>
-	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
-	<key>CFBundleName</key>
-	<string>Beacon</string>
+	<key>BeamFeedbackSecret</key>
+	<string>$(BEAM_FEEDBACK_SECRET)</string>
 	<key>CFBundleDisplayName</key>
 	<string>Beacon</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleName</key>
+	<string>Beacon</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
-	<key>CFBundleIconFile</key>
-	<string>AppIcon</string>
-	<key>NSPrincipalClass</key>
-	<string>NSApplication</string>
-
-	<!-- Menu bar only - no Dock icon, no main window -->
-	<key>LSUIElement</key>
-	<true/>
-
-	<!-- Minimum macOS version -->
 	<key>LSMinimumSystemVersion</key>
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
-
-	<!-- Permission usage descriptions -->
-	<key>NSScreenCaptureUsageDescription</key>
-	<string>Beacon needs Screen Recording permission to stream your Mac's display to your iPhone.</string>
-
+	<key>LSUIElement</key>
+	<true/>
 	<key>NSAccessibilityUsageDescription</key>
 	<string>Beacon needs Accessibility permission to forward media keys (play/pause, next, previous) from your iPhone to your Mac.</string>
-
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>Beacon uses your local network to stream your screen to paired iPhone devices.</string>
-
-	<!-- Sparkle auto-update -->
-	<key>SUFeedURL</key>
-	<string>https://beamscreen.app/appcast.xml</string>
-	<key>SUPublicEDKey</key>
-	<string>DSBKP9n2Vs1s39L4N+ae3VRVBAmnP7tGYQnLo4b0Ibg=</string>
-	<key>SUEnableAutomaticChecks</key>
-	<true/>
-
-	<!-- Bonjour services used -->
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_beam._tcp</string>
 	</array>
-
-	<!-- Human Interface -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Beacon uses your local network to stream your screen to paired iPhone devices.</string>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>Beacon needs Screen Recording permission to stream your Mac's display to your iPhone.</string>
 	<key>NSSupportsAutomaticTermination</key>
 	<false/>
 	<key>NSSupportsSuddenTermination</key>
 	<false/>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://beamscreen.app/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>DSBKP9n2Vs1s39L4N+ae3VRVBAmnP7tGYQnLo4b0Ibg=</string>
 </dict>
 </plist>

@@ -63,9 +63,9 @@ hdiutil create -volname "Beacon" -srcfolder $STAGING -ov -format UDZO /tmp/Beaco
 
 # 4. Notarize
 xcrun notarytool submit /tmp/Beacon.dmg \
-  --key ~/Downloads/AuthKey_REDACTED_ASC_KEY_ID.p8 \
-  --key-id REDACTED_ASC_KEY_ID \
-  --issuer REDACTED_ASC_ISSUER_ID \
+  --key "$ASC_KEY_PATH" \
+  --key-id $ASC_KEY_ID \
+  --issuer $ASC_ISSUER_ID \
   --wait
 # Must say: status: Accepted
 
