@@ -37,7 +37,7 @@ struct SettingsView: View {
     /// Permissions, Support, and Open Source. Grow this if you add a row to General, or the
     /// bottom of that tab will clip. The scene sets `.windowResizability(.contentSize)`, so this
     /// is the window size, not a minimum.
-    static let windowSize = CGSize(width: 460, height: 680)
+    static let windowSize = CGSize(width: 460, height: 730)
 }
 
 // MARK: - General Tab
@@ -127,6 +127,20 @@ struct GeneralSettingsTab: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .buttonStyle(.plain)
+
+                Divider()
+
+                // Beam for iPhone is the other half of this product and the app never linked to
+                // it. Someone pairing a second phone, or reinstalling, had no way to find it
+                // from here.
+                HStack(spacing: 12) {
+                    Link("Beam for iPhone", destination: URL(string: "https://beamscreen.app")!)
+                    Link("Setup Guide", destination: URL(string: "https://beamscreen.app/guide/mirror-mac-to-iphone")!)
+                }
+                .font(.callout)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             // AGPL section 5 requires an interactive program to display Appropriate Legal
@@ -143,9 +157,9 @@ struct GeneralSettingsTab: View {
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: 12) {
-                        Link("View Source", destination: URL(string: "https://github.com/kevinerikjs/beam-macos")!)
+                        Link("View Source", destination: URL(string: "https://github.com/kevinerikjs/beacon-macos")!)
                         Link("License", destination: URL(string: "https://www.gnu.org/licenses/agpl-3.0.html")!)
-                        Link("Commercial Use", destination: URL(string: "https://github.com/kevinerikjs/beam-macos/blob/main/COMMERCIAL-LICENSE.md")!)
+                        Link("Commercial Use", destination: URL(string: "https://github.com/kevinerikjs/beacon-macos/blob/main/COMMERCIAL-LICENSE.md")!)
                     }
                     .font(.callout)
                 }
