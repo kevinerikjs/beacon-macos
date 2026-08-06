@@ -13,7 +13,6 @@
 		2BC501F9F5AD3D440E6FD5DC /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 3601B9031A71A2F93370720F /* Assets.xcassets */; };
 		327FCF4592A28A2008B1F31D /* CoreImage.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = BBCAD3D612C1B8AA1BBB24DE /* CoreImage.framework */; };
 		3D114FF7D36F1E09951F2B08 /* ControlChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A6E292D2C537497C59F849 /* ControlChannel.swift */; };
-		BEA0C0DECAFE000000000002 /* VirtualGamepad.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEA0C0DECAFE000000000001 /* VirtualGamepad.swift */; };
 		3EE41EA4D46235B4167EE1DF /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E5D21F7318EDD34ABD76A53 /* AppState.swift */; };
 		4434A132FF6710CE527CDD38 /* BonjourAdvertiser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94D2C730E21206AB82749ADA /* BonjourAdvertiser.swift */; };
 		BEA0C0DECAFE00000000T002 /* TailscaleAddress.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEA0C0DECAFE00000000T001 /* TailscaleAddress.swift */; };
@@ -66,7 +65,6 @@
 		18D4C659F4324AB4B9B0F43C /* MacFeedbackView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = MacFeedbackView.swift; path = BeamHost/Settings/MacFeedbackView.swift; sourceTree = SOURCE_ROOT; };
 		51426D37347E81FF12533723 /* StreamServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = StreamServer.swift; path = BeamHost/Network/StreamServer.swift; sourceTree = SOURCE_ROOT; };
 		51A6E292D2C537497C59F849 /* ControlChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ControlChannel.swift; path = BeamHost/Network/ControlChannel.swift; sourceTree = SOURCE_ROOT; };
-		BEA0C0DECAFE000000000001 /* VirtualGamepad.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = VirtualGamepad.swift; path = BeamHost/Network/VirtualGamepad.swift; sourceTree = SOURCE_ROOT; };
 		59F9378E8DADD6CB98646113 /* ScreenCaptureKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ScreenCaptureKit.framework; path = System/Library/Frameworks/ScreenCaptureKit.framework; sourceTree = SDKROOT; };
 		5BC85343E06C5820CCA0C29A /* BeamHost.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; name = BeamHost.entitlements; path = BeamHost/BeamHost.entitlements; sourceTree = SOURCE_ROOT; };
 		7076F1A63581EE3ADD5EA723 /* LoginItemManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LoginItemManager.swift; path = BeamHost/LoginItemManager.swift; sourceTree = SOURCE_ROOT; };
@@ -195,7 +193,6 @@
 				51426D37347E81FF12533723 /* StreamServer.swift */,
 				3C29E415777A934B56667281 /* StreamSession.swift */,
 				51A6E292D2C537497C59F849 /* ControlChannel.swift */,
-				BEA0C0DECAFE000000000001 /* VirtualGamepad.swift */,
 			);
 			name = Network;
 			sourceTree = "<group>";
@@ -329,7 +326,6 @@
 				AB14914A15ECF1490C8B45CA /* StreamServer.swift in Sources */,
 				006BC1271BA976BAC9341DCE /* StreamSession.swift in Sources */,
 				3D114FF7D36F1E09951F2B08 /* ControlChannel.swift in Sources */,
-				BEA0C0DECAFE000000000002 /* VirtualGamepad.swift in Sources */,
 				ABD858C7F249644F59606EDC /* PairingManager.swift in Sources */,
 				B69483C899F6864E579C821A /* PairingWindowController.swift in Sources */,
 				C0B2C01DC0056C5E71DD49ED /* QRCodeGenerator.swift in Sources */,

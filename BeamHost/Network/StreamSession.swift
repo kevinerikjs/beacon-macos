@@ -141,7 +141,6 @@ final class StreamSession {
         heartbeatTimer = nil
         connection.cancel()
         udpConnection?.cancel()
-        VirtualGamepad.shared.teardown()
         logger.info("Session \(self.id) disconnected")
     }
 
@@ -184,12 +183,15 @@ final class StreamSession {
     }
 
     private func handleIncomingMessage(_ data: Data) {
-        // Binary packets (controller input) carry a BeamPacketHeader; JSON messages
-        // never start with the "BEAM" magic, so this check is unambiguous and cheap.
+        // Binary packets carry a BeamPacketHeader; JSON messages never start with the
+        // "BEAM" magic, so this check is unambiguous and cheap.
+        //
+        // Controller input (.input) is recognised and dropped rather than ignored. Beacon
+        // cannot replay it into a virtual gamepad without the approval-gated
+        // com.apple.developer.hid.virtual.device entitlement, which Apple has not granted
+        // yet. Dropping it here matters: falling through to the JSON path floods the log
+        // with decode failures at 60 Hz for as long as a controller is connected.
         if let header = BeamPacketHeader.parse(from: data), header.type == .input {
-            guard isAuthenticated,
-                  let state = BeamControllerState.parse(from: data.dropFirst(BeamPacketHeader.size)) else { return }
-            VirtualGamepad.shared.handle(state, connected: header.flags & BeamControllerState.connectedFlag != 0)
             return
         }
         do {

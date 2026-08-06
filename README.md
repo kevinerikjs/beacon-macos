@@ -17,6 +17,15 @@ are streaming in about a minute.
 > does with that, the code is public so you can check. Most people should just grab the DMG above,
 > it is the same app, signed and notarized, and it updates itself.
 
+> **One difference from the shipped build, so you do not have to find it yourself.** Beacon 1.2.1
+> on the download link contains dormant, non-functional code for forwarding an iPhone-paired game
+> controller to the Mac. It cannot do anything: creating a virtual gamepad needs Apple's
+> `com.apple.developer.hid.virtual.device` entitlement, which has been requested and not granted,
+> and the feature has therefore never been tested end to end. Rather than publish code nobody can
+> run or verify, it is left out here and comes back once the entitlement lands. `StreamSession`
+> still recognises controller packets and drops them, which is why you will see `.input` referred
+> to in `Protocol.swift`.
+
 ---
 
 ## How it works
