@@ -131,8 +131,7 @@ it, including commercially. What the AGPL asks in return is that if you distribu
 something derived from it, you publish your source under the AGPL too.
 
 **A commercial license is available** if you want to build on Beacon without those source
-disclosure obligations, for instance inside a closed source product. Terms are negotiable and there
-is no fixed price list, because a solo developer and a hardware company do not need the same deal.
+disclosure obligations, for instance inside a closed source product. Terms are negotiable.
 
 If that is you, mail **[support@beamscreen.app](mailto:support@beamscreen.app)** with the subject
 `Commercial license` and a paragraph on what you are building. See
