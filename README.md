@@ -6,7 +6,7 @@ It is a macOS menu bar app that captures your display and system audio and sends
 [Beam](https://apps.apple.com/us/app/beam-stream-your-screen/id6760154962) iOS app over your local
 network. No cables, no cloud, no account. The video never leaves your network.
 
-### [Download Beacon](https://github.com/kevinerikjs/beacon-releases/releases/latest/download/Beacon.dmg)
+### [Download Beacon](https://github.com/kevinerikjs/beacon-macos/releases/latest/download/Beacon.dmg)
 
 Free, signed, and notarized. Pair it with **[Beam on the App
 Store](https://apps.apple.com/us/app/beam-stream-your-screen/id6760154962)** on your iPhone and you
@@ -54,8 +54,8 @@ You do not need to build Beacon to use it, the [DMG](#download-beacon) is the ea
 want to audit or modify it:
 
 ```bash
-git clone https://github.com/kevinerikjs/beam-macos.git
-cd beam-macos
+git clone https://github.com/kevinerikjs/beacon-macos.git
+cd beacon-macos
 open BeamHost.xcodeproj
 ```
 
@@ -157,6 +157,6 @@ export ASC_ISSUER_ID=...       # App Store Connect issuer id
 export ASC_KEY_PATH=...        # path to the AuthKey_*.p8, never committed
 ```
 
-DMGs are published to [beacon-releases](https://github.com/kevinerikjs/beacon-releases). The
+DMGs are published to [beacon-macos](https://github.com/kevinerikjs/beacon-macos). The
 download URL in this README always resolves to the newest release automatically, so it does not
 need updating per release.

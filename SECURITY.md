@@ -45,8 +45,7 @@ fix is taking too long, say so and we will agree a date rather than let it drift
 through the normal Sparkle update channel, and the release notes will credit you unless you would
 rather stay anonymous.
 
-There is no bug bounty. This is a one-person project and there is no budget for one, which is
-worth saying plainly rather than leaving you to find out after the work.
+There is no bug bounty. This is a one-person project with no budget for one.
 
 ## Scope of this policy
 
