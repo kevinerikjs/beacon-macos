@@ -70,11 +70,14 @@ struct BeaconApp: App {
         .menuBarExtraStyle(.menu)
 
         // Preferences window (opened via menu)
+        // SettingsView owns the size (SettingsView.windowSize, fixed to the tallest tab).
+        // .contentSize makes the window adopt exactly that and drops the resize handles, so
+        // the window can never be dragged smaller than the content it has to show.
         Settings {
             SettingsView()
                 .environment(appState)
-                .frame(width: 420, height: 480)
         }
+        .windowResizability(.contentSize)
     }
 }
 

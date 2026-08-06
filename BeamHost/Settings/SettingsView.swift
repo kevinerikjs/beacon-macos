@@ -24,8 +24,20 @@ struct SettingsView: View {
                 .environment(appState)
         }
         .padding(20)
-        .frame(width: 420, height: 440)
+        .frame(width: Self.windowSize.width, height: Self.windowSize.height)
     }
+
+    /// One fixed size for every tab, sized to the tallest one.
+    ///
+    /// A TabView sizes itself to whichever tab is showing, so letting it size naturally makes the
+    /// window jump every time you switch tabs. Pinning all three to the tallest keeps the window
+    /// still, at the cost of some empty space under Display and Devices.
+    ///
+    /// General is the tallest and sets this number: app header, Behavior, Global Hotkey,
+    /// Permissions, Support, and Open Source. Grow this if you add a row to General, or the
+    /// bottom of that tab will clip. The scene sets `.windowResizability(.contentSize)`, so this
+    /// is the window size, not a minimum.
+    static let windowSize = CGSize(width: 460, height: 680)
 }
 
 // MARK: - General Tab
