@@ -12,6 +12,28 @@ Free, signed, and notarized. Pair it with **[Beam on the App
 Store](https://apps.apple.com/us/app/beam-stream-your-screen/id6760154962)** on your iPhone and you
 are streaming in about a minute.
 
+## Why this exists: macOS can't do it
+
+Mac to iPhone is the one screen-mirroring direction Apple has never shipped, so the features
+people find while searching all point the wrong way:
+
+- **AirPlay** — an iPhone can *send* AirPlay but never *receive* it. A Mac can AirPlay to an Apple
+  TV, an AirPlay-compatible TV, a HomePod for audio, or another Mac running AirPlay Receiver.
+  Never to an iPhone. "Reverse AirPlay" isn't a thing.
+- **Sidecar** — turns an *iPad* into a second Mac display. It has never supported iPhone.
+- **iPhone Mirroring** (macOS Sequoia and later) — puts your *iPhone* on your *Mac*. Opposite
+  direction.
+
+Beacon plus Beam covers that gap: your Mac's screen and audio, on your phone, over your own WiFi.
+
+Worth being clear about the limit — this is a **viewer, not a remote control**. It shows your Mac
+and plays its audio; it does not send touch or keyboard input back. If you need to actually operate
+the Mac, you want a remote desktop tool instead.
+
+More detail: [why AirPlay can't do this](https://beamscreen.app/guide/airplay-mac-to-iphone) ·
+[every Mac mirroring path compared](https://beamscreen.app/guide/mac-screen-mirroring) ·
+[setup guide](https://beamscreen.app/guide/mirror-mac-to-iphone)
+
 > **Why the source is here.** Beacon records your screen and your audio, which is about as much
 > trust as you can ask of a piece of software. Rather than ask you to take our word for what it
 > does with that, the code is public so you can check. Most people should just grab the DMG above,
