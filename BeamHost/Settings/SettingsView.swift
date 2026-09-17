@@ -411,7 +411,7 @@ private struct PhoneControlSettingsRow: View {
                 } label: {
                     Image(systemName: button.symbol)
                         .font(.system(size: 16, weight: .medium))
-                        .frame(width: 30, height: 28)
+                        .frame(width: 28, height: 28)
                 }
                 .buttonStyle(.bordered)
                 .help("Choose icon")
@@ -449,7 +449,7 @@ private struct PhoneControlSettingsRow: View {
             HStack(spacing: 10) {
                 Text("Action")
                     .foregroundStyle(.secondary)
-                    .frame(width: 62, alignment: .leading)
+                    .frame(width: 84, alignment: .leading)
                 Picker("Action", selection: actionKindBinding) {
                     ForEach(PhoneControlAction.Kind.allCases) { kind in
                         Text(kind.title).tag(kind)
