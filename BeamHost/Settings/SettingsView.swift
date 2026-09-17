@@ -38,7 +38,10 @@ struct SettingsView: View {
         .frame(width: Self.windowSize.width, height: Self.windowSize.height)
         #if DEBUG
         .onAppear {
-            if UserDefaults.standard.bool(forKey: "beacon.debug.openSettings")
+            // `-beacon.debug.settingsTab display` picks the tab for screenshots.
+            if let tab = UserDefaults.standard.string(forKey: "beacon.debug.settingsTab") {
+                selectedTab = tab
+            } else if UserDefaults.standard.bool(forKey: "beacon.debug.openSettings")
                 || UserDefaults.standard.bool(forKey: "beacon.debug.openMacroEditor") {
                 selectedTab = "controls"
             }
@@ -1285,6 +1288,18 @@ struct DisplaySettingsTab: View {
                 }
             }
 
+            settingsGroup(header: "On Connect") {
+                settingsRow("Capture") {
+                    DefaultWindowPicker()
+                }
+                Text("What a phone sees when the stream starts. A window is matched by app and title; if that window is gone, another window of the same app, else the full display.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 8)
+            }
+
             settingsGroup(header: "Quality") {
                 settingsRow("Default Preset") {
                     Picker("", selection: Binding(
@@ -1324,6 +1339,54 @@ struct DisplaySettingsTab: View {
 
     private func displayName(for display: SCDisplay, index: Int) -> String {
         "Display \(index + 1)\(index == 0 ? " (Main)" : "")"
+    }
+}
+
+/// Full display, or one of the windows open right now. A stored window that is not open at
+/// the moment still shows, so the choice never silently disappears.
+private struct DefaultWindowPicker: View {
+    @Environment(AppState.self) private var appState
+    @State private var windows: [SCWindow] = []
+
+    private struct Choice: Hashable {
+        let bundleID: String
+        let appName: String
+        let title: String
+    }
+
+    var body: some View {
+        let stored = appState.defaultWindow.map { Choice(bundleID: $0.bundleID, appName: $0.appName, title: $0.title) }
+        var choices: [Choice] = windows.compactMap { window in
+            guard window.windowLayer == 0,
+                  let app = window.owningApplication,
+                  app.bundleIdentifier != Bundle.main.bundleIdentifier,
+                  let title = window.title, !title.isEmpty else { return nil }
+            return Choice(bundleID: app.bundleIdentifier, appName: app.applicationName, title: title)
+        }
+        if let stored, !choices.contains(stored) { choices.insert(stored, at: 0) }
+        let unique = Array(NSOrderedSet(array: choices)) as! [Choice]
+
+        return Picker("Capture", selection: Binding<Choice?>(
+            get: { stored },
+            set: { choice in
+                appState.defaultWindow = choice.map {
+                    DefaultWindowPreference(bundleID: $0.bundleID, appName: $0.appName, title: $0.title)
+                }
+            }
+        )) {
+            Text("Full display").tag(Choice?.none)
+            if !unique.isEmpty { Divider() }
+            ForEach(unique, id: \.self) { choice in
+                Text("\(choice.appName): \(choice.title)")
+                    .lineLimit(1)
+                    .tag(Choice?.some(choice))
+            }
+        }
+        .labelsHidden()
+        .pickerStyle(.menu)
+        .fixedSize()
+        .frame(maxWidth: 260, alignment: .trailing)
+        .task { windows = await ScreenCapture.availableWindows() }
     }
 }
 

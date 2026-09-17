@@ -57,6 +57,12 @@ final class AppState {
             LoginItemManager.shared.setEnabled(launchAtLogin)
         }
     }
+
+    /// Window to capture when a stream starts (BEAM-41). nil = full display. Matched on
+    /// connect by app bundle id and title, then any window of that app, then full display.
+    var defaultWindow: DefaultWindowPreference? = DefaultWindowPreference.load() {
+        didSet { defaultWindow.save() }
+    }
     // MARK: - Quality
 
     let qualityManager = VideoQualityManager()
@@ -207,4 +213,30 @@ struct PairedDevice: Codable, Identifiable {
     let name: String      // e.g. "Kevin's iPhone"
     let sharedSecret: Data
     var lastSeen: Date
+}
+
+
+// MARK: - Default window on connect (BEAM-41)
+
+struct DefaultWindowPreference: Codable, Equatable {
+    let bundleID: String
+    let appName: String
+    let title: String
+
+    private static let key = "defaultWindowOnConnect"
+
+    static func load() -> DefaultWindowPreference? {
+        guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
+        return try? JSONDecoder().decode(DefaultWindowPreference.self, from: data)
+    }
+}
+
+extension Optional where Wrapped == DefaultWindowPreference {
+    func save() {
+        if let self, let data = try? JSONEncoder().encode(self) {
+            UserDefaults.standard.set(data, forKey: "defaultWindowOnConnect")
+        } else {
+            UserDefaults.standard.removeObject(forKey: "defaultWindowOnConnect")
+        }
+    }
 }

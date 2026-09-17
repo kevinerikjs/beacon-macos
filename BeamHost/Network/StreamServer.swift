@@ -466,6 +466,13 @@ final class StreamServer {
         }
 
         let preset = qualityManager.activePreset
+        // No window chosen by a phone yet: apply the Mac's "on connect" preference (BEAM-41).
+        if pendingWindowSelection == nil,
+           let preference = await MainActor.run(body: { appState?.defaultWindow }),
+           let window = await resolveDefaultWindow(preference) {
+            pendingWindowSelection = window
+            await MainActor.run { self.appState?.isWindowMode = true }
+        }
         let hadPendingWindowSelection = pendingWindowSelection != nil
         let resolvedPendingWindow = await resolvePendingWindowSelection()
         do {
@@ -667,6 +674,27 @@ final class StreamServer {
     private func resolvePendingWindowSelection() async -> SCWindow? {
         guard let pendingWindowSelection else { return nil }
         return await resolveWindowSelection(from: pendingWindowSelection)
+    }
+
+    /// The window the "on connect" preference points at right now: same app and title first,
+    /// else the frontmost titled window of that app, else nil (full display). Logged so a
+    /// surprising start can be explained.
+    private func resolveDefaultWindow(_ preference: DefaultWindowPreference) async -> SCWindow? {
+        let windows = await ScreenCapture.availableWindows().filter {
+            $0.windowLayer == 0
+                && $0.owningApplication?.bundleIdentifier == preference.bundleID
+                && !($0.title ?? "").isEmpty
+        }
+        if let exact = windows.first(where: { $0.title == preference.title }) {
+            logger.info("Default window on connect: \(preference.appName) — \(preference.title)")
+            return exact
+        }
+        if let sameApp = windows.first {
+            logger.info("Default window on connect: \(preference.appName) window \"\(preference.title)\" not open, using \"\(sameApp.title ?? "")\"")
+            return sameApp
+        }
+        logger.info("Default window on connect: \(preference.appName) has no window open, using full display")
+        return nil
     }
 
     private func resolveWindowSelection(from requestedWindow: SCWindow) async -> SCWindow? {
