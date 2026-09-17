@@ -196,7 +196,17 @@ final class PhoneControlsStore {
 
     private init() {
         if let saved = Self.load() {
-            let loadedLayouts = saved.layouts.isEmpty ? [Self.defaultLayout] : saved.layouts
+            var loadedLayouts = saved.layouts.isEmpty ? [Self.defaultLayout] : saved.layouts
+            // The built-in layout was persisted before the keyboard button existed: append it
+            // once so upgraded installs get the same default as fresh ones.
+            if let index = loadedLayouts.firstIndex(where: { $0.isBuiltIn }),
+               loadedLayouts[index].buttons.count < 7,
+               !loadedLayouts[index].buttons.contains(where: { $0.action.kind == .textInput }) {
+                loadedLayouts[index].buttons.append(
+                    PhoneControlButton(id: UUID(), symbol: "keyboard", label: "Keyboard Input", prominent: false,
+                                       action: .textInput(prompt: "", sendReturn: true))
+                )
+            }
             layouts = loadedLayouts
             activeLayoutID = loadedLayouts.contains(where: { $0.id == saved.activeLayoutID })
                 ? saved.activeLayoutID : loadedLayouts[0].id
@@ -394,7 +404,9 @@ final class PhoneControlsStore {
             PhoneControlButton(id: UUID(), symbol: "forward.fill", label: "Next", prominent: false,
                                action: .mediaKey(.next)),
             PhoneControlButton(id: UUID(), symbol: "arrow.clockwise", label: "Seek Forward", prominent: false,
-                               action: .key(keyCode: UInt32(kVK_RightArrow), modifiers: 0))
+                               action: .key(keyCode: UInt32(kVK_RightArrow), modifiers: 0)),
+            PhoneControlButton(id: UUID(), symbol: "keyboard", label: "Keyboard Input", prominent: false,
+                               action: .textInput(prompt: "", sendReturn: true))
         ]
     )
 }
