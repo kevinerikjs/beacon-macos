@@ -445,7 +445,7 @@ private struct PhoneControlSettingsRow: View {
                 }
                 .labelsHidden()
                 .pickerStyle(.menu)
-                .frame(width: 150)
+                .frame(width: 138)
 
                 actionDetail
             }
@@ -469,7 +469,7 @@ private struct PhoneControlSettingsRow: View {
                     $0.action = .key(keyCode: keyCode, modifiers: modifiers)
                 }
             }
-            .frame(minWidth: 128)
+            .frame(minWidth: 72, maxWidth: .infinity)
             Menu {
                 ForEach(Self.quickKeys, id: \.title) { key in
                     Button(key.title) {
@@ -482,6 +482,7 @@ private struct PhoneControlSettingsRow: View {
                 Text("Common")
             }
             .menuStyle(.button)
+            .controlSize(.small)
             .fixedSize()
             .help("Pick a common key")
         case .mediaKey(let kind):
