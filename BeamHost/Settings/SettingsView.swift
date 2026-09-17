@@ -493,11 +493,9 @@ private struct PhoneControlSettingsRow: View {
         case .macro(let macroID):
             macroPicker(macroID: macroID)
         case .textInput:
-            Text("Typed, then Return")
-                .font(.callout)
+            Image(systemName: "info.circle")
                 .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .fixedSize()
+                .help("Tap this button on the phone and Beam asks you for text. Beacon types that text into the app that has keyboard focus on the Mac, then presses Return.")
         case .none:
             Text("No action")
                 .font(.callout)
