@@ -393,6 +393,9 @@ private struct PhoneControlSettingsRow: View {
     let onEditMacro: (Macro, (layoutID: UUID, buttonID: UUID)?) -> Void
 
     @State private var showingIconPicker = false
+    @State private var showingTextInputInfo = false
+
+    private static let textInputInfo = "Tap this button on the phone and Beam asks you for text. Beacon types that text into the app that has keyboard focus on the Mac, then presses Return."
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -498,9 +501,18 @@ private struct PhoneControlSettingsRow: View {
             macroPicker(macroID: macroID)
         case .textInput:
             Spacer(minLength: 0)
-            Image(systemName: "info.circle")
-                .foregroundStyle(.secondary)
-                .help("Tap this button on the phone and Beam asks you for text. Beacon types that text into the app that has keyboard focus on the Mac, then presses Return.")
+            Button { showingTextInputInfo.toggle() } label: {
+                Image(systemName: "info.circle")
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.borderless)
+            .help(Self.textInputInfo)
+            .popover(isPresented: $showingTextInputInfo, arrowEdge: .bottom) {
+                Text(Self.textInputInfo)
+                    .font(.callout)
+                    .frame(width: 260, alignment: .leading)
+                    .padding(12)
+            }
         case .none:
             Spacer(minLength: 0)
             Text("No action")
