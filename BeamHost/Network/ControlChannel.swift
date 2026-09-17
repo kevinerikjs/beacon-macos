@@ -1,5 +1,5 @@
 // ControlChannel.swift
-// Sends media key events to the system on behalf of the connected iPhone.
+// Sends configured phone-control events to the system on behalf of the connected iPhone.
 
 import AppKit
 import ApplicationServices
@@ -8,107 +8,102 @@ import OSLog
 
 private let logger = Logger(subsystem: "com.beam.beacon", category: "ControlChannel")
 
-/// Dispatches media key events to macOS system media controls.
+/// Dispatches configured keyboard, media-key, and macro actions.
 enum MediaKeyDispatcher {
+    // NX key type constants from IOKit's ev_keymap.h.
+    private static let nxKeyTypeSoundUp: Int32 = 0
+    private static let nxKeyTypeSoundDown: Int32 = 1
+    private static let nxKeyTypeMute: Int32 = 7
+    private static let nxKeyTypePlay: Int32 = 16
+    private static let nxKeyTypeNext: Int32 = 17
+    private static let nxKeyTypePrevious: Int32 = 18
 
-    // NX key type constants (from IOKit's ev_keymap.h)
-    private static let NX_KEYTYPE_PLAY: Int32       = 16
-    private static let NX_KEYTYPE_NEXT: Int32       = 17
-    private static let NX_KEYTYPE_PREVIOUS: Int32   = 18
-    private static let NX_KEYTYPE_FAST: Int32       = 19
-    private static let NX_KEYTYPE_REWIND: Int32     = 20
-
-    /// Whether Accessibility permission has been granted (required to post CGEvents).
+    /// Whether Accessibility permission has been granted, as required to post CGEvents.
     static var isAccessibilityGranted: Bool {
         AXIsProcessTrusted()
     }
 
-    /// Prompt the user to grant Accessibility permission (opens System Settings).
+    /// Prompt the user to grant Accessibility permission in System Settings.
     static func requestAccessibilityPermission() {
-        let opts = [kAXTrustedCheckOptionPrompt.takeRetainedValue() as String: true] as CFDictionary
-        AXIsProcessTrustedWithOptions(opts)
+        let options = [kAXTrustedCheckOptionPrompt.takeRetainedValue() as String: true] as CFDictionary
+        AXIsProcessTrustedWithOptions(options)
     }
 
-    /// Sends the media key event corresponding to the given control command.
-    /// No-op (with a log warning) if Accessibility permission has not been granted.
-    static func send(_ key: BeamMediaKeyPayload.Key) {
+    /// Sends a configured action when the phone includes a control id. Legacy phone clients only
+    /// send `key`, so they retain the original arrow-key and NX media-key behaviour.
+    static func send(_ payload: BeamMediaKeyPayload) {
         guard isAccessibilityGranted else {
-            logger.warning("Accessibility permission not granted — media key '\(key.rawValue)' dropped. Grant access in System Settings > Privacy > Accessibility.")
+            logger.warning("Accessibility permission not granted; phone control dropped. Grant access in System Settings > Privacy > Accessibility.")
             return
         }
 
-        switch PhoneControlsStore.shared.action(for: key) {
-        case .arrowKeys:
-            guard let keyCode = keyboardKeyCode(for: key) else { return }
-            logger.info("Sending keyboard key: \(key.rawValue)")
-            postKeyEvent(keyCode: keyCode)
-        case .jlKeys:
-            guard let keyCode = jlKeyCode(for: key) else { return }
-            logger.info("Sending J/L key: \(key.rawValue)")
-            postKeyEvent(keyCode: keyCode)
-        case .shiftArrows:
-            guard let keyCode = keyboardKeyCode(for: key) else { return }
-            logger.info("Sending Shift key: \(key.rawValue)")
-            postChord(keyCode: keyCode, modifiers: UInt32(shiftKey))
-        case .mediaKeys:
-            sendMediaKey(for: key)
-        case .shortcut(let keyCode, let modifiers):
-            logger.info("Sending shortcut: \(key.rawValue)")
-            postChord(keyCode: keyCode, modifiers: modifiers)
-        case .macro(let steps):
-            logger.info("Sending macro: \(key.rawValue), \(steps.count) steps")
-            replayMacro(steps)
+        if let controlID = payload.controlID,
+           let action = PhoneControlsStore.shared.action(forControlID: controlID) {
+            perform(action, text: payload.text)
+        } else {
+            performLegacy(payload.key)
         }
     }
 
-    private static func keyboardKeyCode(for key: BeamMediaKeyPayload.Key) -> UInt32? {
+    private static func perform(_ action: PhoneControlAction, text: String?) {
+        switch action {
+        case .textInput(_, let sendReturn):
+            guard let text, !text.isEmpty else { return }
+            typeText(text, sendReturn: sendReturn)
+        case .key(let keyCode, let modifiers):
+            postKeyPress(keyCode: keyCode, modifiers: modifiers)
+        case .mediaKey(let kind):
+            postMediaKey(kind)
+        case .macro(let id):
+            guard let macro = PhoneControlsStore.shared.macro(id: id) else {
+                logger.warning("Phone control references a missing macro: \(id.uuidString)")
+                return
+            }
+            replayMacro(macro.steps)
+        case .none:
+            break
+        }
+    }
+
+    private static func performLegacy(_ key: BeamMediaKeyPayload.Key) {
         switch key {
-        case .seekBackward: return UInt32(kVK_LeftArrow)
-        case .seekForward:  return UInt32(kVK_RightArrow)
-        case .playPause:    return UInt32(kVK_Space)
-        case .next, .previous: return nil
+        case .seekBackward:
+            postKeyPress(keyCode: UInt32(kVK_LeftArrow), modifiers: 0)
+        case .seekForward:
+            postKeyPress(keyCode: UInt32(kVK_RightArrow), modifiers: 0)
+        case .playPause:
+            postMediaKey(.playPause)
+        case .next:
+            postMediaKey(.next)
+        case .previous:
+            postMediaKey(.previous)
         }
     }
 
-    private static func jlKeyCode(for key: BeamMediaKeyPayload.Key) -> UInt32? {
-        switch key {
-        case .seekBackward: return UInt32(kVK_ANSI_J)
-        case .seekForward:  return UInt32(kVK_ANSI_L)
-        case .playPause:    return UInt32(kVK_ANSI_K)
-        case .next, .previous: return nil
-        }
-    }
-
-    private static func sendMediaKey(for key: BeamMediaKeyPayload.Key) {
+    /// Posts press and release events for an NX media key.
+    private static func postMediaKey(_ kind: MediaKeyKind) {
         let keyCode: Int32
-        switch key {
-        case .playPause:  keyCode = NX_KEYTYPE_PLAY
-        case .next:       keyCode = NX_KEYTYPE_NEXT
-        case .previous:   keyCode = NX_KEYTYPE_PREVIOUS
-        case .seekBackward: keyCode = NX_KEYTYPE_PREVIOUS
-        case .seekForward:  keyCode = NX_KEYTYPE_NEXT
+        switch kind {
+        case .playPause: keyCode = nxKeyTypePlay
+        case .next: keyCode = nxKeyTypeNext
+        case .previous: keyCode = nxKeyTypePrevious
+        case .volumeUp: keyCode = nxKeyTypeSoundUp
+        case .volumeDown: keyCode = nxKeyTypeSoundDown
+        case .mute: keyCode = nxKeyTypeMute
         }
-        logger.info("Sending media key: \(key.rawValue)")
-        postMediaKey(keyCode: keyCode)
-    }
 
-    /// Posts a CGEvent media key press+release to the system event stream.
-    private static func postMediaKey(keyCode: Int32) {
-        // Media keys use NX events packed into a CGEvent
-        // This technique works for system-wide media key events (Spotify, Apple Music, etc.)
-        let keyDownEvent = NSEvent.otherEvent(
+        let down = NSEvent.otherEvent(
             with: .systemDefined,
             location: .zero,
             modifierFlags: NSEvent.ModifierFlags(rawValue: 0xA00),
             timestamp: ProcessInfo.processInfo.systemUptime,
             windowNumber: 0,
             context: nil,
-            subtype: 8,   // NX_SUBTYPE_AUX_MOUSE_BUTTONS not right, use 8 for media
+            subtype: 8,
             data1: Int((keyCode << 16) | (0xA << 8)),
             data2: -1
         )
-
-        let keyUpEvent = NSEvent.otherEvent(
+        let up = NSEvent.otherEvent(
             with: .systemDefined,
             location: .zero,
             modifierFlags: NSEvent.ModifierFlags(rawValue: 0xB00),
@@ -119,36 +114,70 @@ enum MediaKeyDispatcher {
             data1: Int((keyCode << 16) | (0xB << 8)),
             data2: -1
         )
-
-        keyDownEvent?.cgEvent?.post(tap: .cghidEventTap)
-        keyUpEvent?.cgEvent?.post(tap: .cghidEventTap)
+        down?.cgEvent?.post(tap: .cghidEventTap)
+        up?.cgEvent?.post(tap: .cghidEventTap)
     }
 
-    /// Posts a regular keyboard key press+release with Carbon modifier masks.
-    private static func postChord(keyCode: UInt32, modifiers: UInt32) {
-        guard let src = CGEventSource(stateID: .hidSystemState) else { return }
-        let flags = eventFlags(for: modifiers)
-        let virtualKey = CGKeyCode(truncatingIfNeeded: keyCode)
-
-        let keyDown = CGEvent(keyboardEventSource: src, virtualKey: virtualKey, keyDown: true)
-        keyDown?.flags = flags
-        keyDown?.post(tap: .cghidEventTap)
-
-        let keyUp = CGEvent(keyboardEventSource: src, virtualKey: virtualKey, keyDown: false)
-        keyUp?.flags = flags
-        keyUp?.post(tap: .cghidEventTap)
+    private static func postKeyPress(keyCode: UInt32, modifiers: UInt32) {
+        postKeyboardEvent(keyCode: keyCode, modifiers: modifiers, isDown: true)
+        postKeyboardEvent(keyCode: keyCode, modifiers: modifiers, isDown: false)
     }
 
-    /// Replays a macro away from the control connection's network queue.
+    private static func postKeyboardEvent(keyCode: UInt32, modifiers: UInt32, isDown: Bool) {
+        guard let source = CGEventSource(stateID: .hidSystemState) else { return }
+        let event = CGEvent(
+            keyboardEventSource: source,
+            virtualKey: CGKeyCode(truncatingIfNeeded: keyCode),
+            keyDown: isDown
+        )
+        event?.flags = eventFlags(for: modifiers)
+        event?.post(tap: .cghidEventTap)
+    }
+
+    /// Replays stored steps off the network queue so a long macro never holds up the session.
     private static func replayMacro(_ steps: [MacroStep]) {
         guard !steps.isEmpty else { return }
-
         DispatchQueue.global(qos: .userInitiated).async {
             for step in steps {
                 if step.delayMs > 0 {
                     Thread.sleep(forTimeInterval: TimeInterval(step.delayMs) / 1_000)
                 }
-                postChord(keyCode: step.keyCode, modifiers: step.modifiers)
+                postMacroStep(step)
+            }
+        }
+    }
+
+    private static func postMacroStep(_ step: MacroStep) {
+        switch step {
+        case .keyDown(let keyCode, let modifiers, _):
+            postKeyboardEvent(keyCode: keyCode, modifiers: modifiers, isDown: true)
+        case .keyUp(let keyCode, let modifiers, _):
+            postKeyboardEvent(keyCode: keyCode, modifiers: modifiers, isDown: false)
+        }
+    }
+
+    /// Types arbitrary text into whatever has focus, as Unicode key events so it works on any
+    /// keyboard layout, one character per event with a short gap so terminals keep up.
+    /// Newlines inside the text are typed as Return too.
+    private static func typeText(_ text: String, sendReturn: Bool) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            guard let source = CGEventSource(stateID: .hidSystemState) else { return }
+            for scalar in text.unicodeScalars {
+                if scalar == "\n" || scalar == "\r" {
+                    postKeyPress(keyCode: UInt32(kVK_Return), modifiers: 0)
+                } else {
+                    var unit = Array(String(scalar).utf16)
+                    for isDown in [true, false] {
+                        let event = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: isDown)
+                        event?.keyboardSetUnicodeString(stringLength: unit.count, unicodeString: &unit)
+                        event?.post(tap: .cghidEventTap)
+                    }
+                }
+                Thread.sleep(forTimeInterval: 0.002)
+            }
+            if sendReturn {
+                Thread.sleep(forTimeInterval: 0.05)
+                postKeyPress(keyCode: UInt32(kVK_Return), modifiers: 0)
             }
         }
     }
@@ -160,10 +189,5 @@ enum MediaKeyDispatcher {
         if modifiers & UInt32(controlKey) != 0 { flags.insert(.maskControl) }
         if modifiers & UInt32(shiftKey) != 0 { flags.insert(.maskShift) }
         return flags
-    }
-
-    /// Posts a regular keyboard key press+release (for arrow keys, etc.).
-    private static func postKeyEvent(keyCode: UInt32) {
-        postChord(keyCode: keyCode, modifiers: 0)
     }
 }

@@ -437,6 +437,12 @@ struct BeamMediaKeyPayload: Codable {
         case seekForward    = "seek_forward"
     }
     let key: Key
+    /// BEAM-39. Id of the pressed button from the host's advertised `phoneControls`. A host
+    /// that advertised a layout acts on this and ignores `key`; older hosts never see it.
+    /// Keep in sync with the other Protocol.swift.
+    var controlID: String? = nil
+    /// BEAM-39. Text the phone user entered for a `promptsForText` button. The host types it.
+    var text: String? = nil
 }
 
 /// Unified quality payload — used for qualityFeedback (quality field), qualityRequest, and qualityChanged (preset field).
@@ -633,14 +639,24 @@ struct BeamPairingMessage: Codable {
     var phoneControls: [BeamPhoneControl]? = nil
 }
 
-/// BEAM-39. One configurable phone button as the host presents it.
+/// BEAM-39. One button of the host's active phone-control layout, in left-to-right order.
+/// Up to 7 per layout. The phone renders exactly this list; a tap sends the button's `id`
+/// back in BeamMediaKeyPayload.controlID.
 struct BeamPhoneControl: Codable, Equatable {
-    /// BeamMediaKeyPayload.Key raw value: "seek_backward", "seek_forward", "play_pause"...
+    /// Stable button id within the layout (UUID string). Not semantic.
     let id: String
     /// SF Symbol name chosen on the Mac.
     let symbol: String
-    /// Short accessibility label / tooltip, e.g. "Rewind 10s" or "Next tab".
+    /// Short accessibility label / tooltip, e.g. "Back 10s" or "Next tab".
     let label: String
+    /// True for the one emphasised (larger) button, normally play/pause in the middle.
+    var prominent: Bool? = nil
+    /// True when the button asks the phone user for text first (a "keyboard" button). The
+    /// phone shows an input box and sends the entered text in BeamMediaKeyPayload.text; the
+    /// host types it as key presses (typically followed by Return). nil/false = plain tap.
+    var promptsForText: Bool? = nil
+    /// Placeholder / title for that input box, e.g. "Prompt Claude".
+    var textPrompt: String? = nil
 }
 
 // MARK: - Helpers

@@ -6,30 +6,44 @@ import Carbon.HIToolbox
 import ScreenCaptureKit
 import ServiceManagement
 import ApplicationServices
+import Observation
 
 struct SettingsView: View {
     @Environment(AppState.self) private var appState
+    @State private var selectedTab = "general"
 
     var body: some View {
-        TabView {
+        TabView(selection: $selectedTab) {
             GeneralSettingsTab()
                 .tabItem { Label("General", systemImage: "gearshape") }
                 .environment(appState)
+                .tag("general")
 
             ControlsSettingsTab()
                 .tabItem { Label("Controls", systemImage: "gamecontroller") }
                 .environment(appState)
+                .tag("controls")
 
             DisplaySettingsTab()
                 .tabItem { Label("Display", systemImage: "display") }
                 .environment(appState)
+                .tag("display")
 
             PairedDevicesTab()
                 .tabItem { Label("Devices", systemImage: "iphone") }
                 .environment(appState)
+                .tag("devices")
         }
         .padding(20)
         .frame(width: Self.windowSize.width, height: Self.windowSize.height)
+        #if DEBUG
+        .onAppear {
+            if UserDefaults.standard.bool(forKey: "beacon.debug.openSettings")
+                || UserDefaults.standard.bool(forKey: "beacon.debug.openMacroEditor") {
+                selectedTab = "controls"
+            }
+        }
+        #endif
     }
 
     /// One fixed size for every tab, sized to the tallest one.
@@ -192,192 +206,429 @@ struct GeneralSettingsTab: View {
 
 struct ControlsSettingsTab: View {
     @State private var store = PhoneControlsStore.shared
+    @State private var showingRenameLayout = false
+    @State private var showingDeleteLayout = false
+    @State private var editingMacro: Macro?
+    @State private var macroAssignment: (layoutID: UUID, buttonID: UUID)?
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                Text("Phone media buttons")
+                Text("Phone controls")
                     .font(.title3.weight(.semibold))
-                Text("Choose what each button on your iPhone sends to Beacon.")
+                Text("Build up to seven buttons for your iPhone, then choose the active layout.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
 
-                ForEach(PhoneControlsStore.buttonIDs, id: \.self) { id in
-                    PhoneControlSettingsGroup(controlID: id, store: store)
+                layoutControls
+
+                let layout = store.activeLayout
+                settingsGroup(header: "Buttons") {
+                    ForEach(Array(layout.buttons.enumerated()), id: \.element.id) { index, button in
+                        PhoneControlSettingsRow(
+                            layout: layout,
+                            button: button,
+                            index: index,
+                            store: store,
+                            onEditMacro: presentMacroEditor
+                        )
+                        if button.id != layout.buttons.last?.id {
+                            Divider().padding(.leading, 12)
+                        }
+                    }
                 }
+
+                Button {
+                    store.addButton(to: layout.id)
+                } label: {
+                    Label("Add button", systemImage: "plus")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .disabled(layout.isBuiltIn || layout.buttons.count >= 7)
+
+                macroLibrary
 
                 Spacer(minLength: 0)
             }
             .padding(.vertical, 4)
         }
         .scrollIndicators(.automatic)
+        .sheet(isPresented: $showingRenameLayout) {
+            LayoutNameSheet(title: "Rename Layout", initialName: store.activeLayout.name) { name in
+                store.renameLayout(id: store.activeLayout.id, to: name)
+            }
+        }
+        .sheet(item: $editingMacro) { macro in
+            MacroEditorSheet(macro: macro) { saved in
+                store.saveMacro(saved)
+                if let assignment = macroAssignment {
+                    store.updateButton(layoutID: assignment.layoutID, buttonID: assignment.buttonID) {
+                        $0.action = .macro(id: saved.id)
+                    }
+                }
+                macroAssignment = nil
+            }
+        }
+        .alert("Delete \(store.activeLayout.name)?", isPresented: $showingDeleteLayout) {
+            Button("Delete", role: .destructive) {
+                store.deleteLayout(id: store.activeLayout.id)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This layout and its button settings will be removed.")
+        }
+        #if DEBUG
+        .onAppear {
+            guard UserDefaults.standard.bool(forKey: "beacon.debug.openMacroEditor") else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                editingMacro = Macro(
+                    id: UUID(), name: "Example Macro",
+                    steps: [
+                        .keyDown(keyCode: UInt32(kVK_ANSI_C), modifiers: UInt32(cmdKey), delayMs: 0),
+                        .keyUp(keyCode: UInt32(kVK_ANSI_C), modifiers: UInt32(cmdKey), delayMs: 120),
+                        .keyDown(keyCode: UInt32(kVK_Return), modifiers: 0, delayMs: 320),
+                        .keyUp(keyCode: UInt32(kVK_Return), modifiers: 0, delayMs: 70)
+                    ]
+                )
+            }
+        }
+        #endif
+    }
+
+    private var layoutControls: some View {
+        settingsGroup(header: "Active layout") {
+            settingsRow("Layout") {
+                Picker("Layout", selection: Binding(
+                    get: { store.activeLayoutID },
+                    set: { store.setActiveLayout($0) }
+                )) {
+                    ForEach(store.layouts) { layout in
+                        Text(layout.name).tag(layout.id)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .frame(width: 185)
+            }
+            Divider().padding(.leading, 12)
+            HStack(spacing: 8) {
+                Button("New") { store.createLayout() }
+                Button("Duplicate") { store.duplicateLayout(store.activeLayout) }
+                Button("Rename") { showingRenameLayout = true }
+                    .disabled(store.activeLayout.isBuiltIn)
+                Button("Delete", role: .destructive) { showingDeleteLayout = true }
+                    .disabled(store.activeLayout.isBuiltIn)
+            }
+            .buttonStyle(.bordered)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+        }
+    }
+
+    private var macroLibrary: some View {
+        settingsGroup(header: "Macro library") {
+            if store.macros.isEmpty {
+                Text("Create a macro to reuse it across buttons and layouts.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+            } else {
+                ForEach(store.macros) { macro in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(macro.name)
+                            Text("\(macro.steps.count) \(macro.steps.count == 1 ? "step" : "steps")")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Edit…") { presentMacroEditor(macro, nil) }
+                            .buttonStyle(.borderless)
+                        Button(role: .destructive) { store.deleteMacro(id: macro.id) } label: {
+                            Image(systemName: "trash")
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Delete macro")
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    if macro.id != store.macros.last?.id {
+                        Divider().padding(.leading, 12)
+                    }
+                }
+            }
+            Divider().padding(.leading, 12)
+            Button {
+                presentMacroEditor(Macro(id: UUID(), name: "New Macro", steps: []), nil)
+            } label: {
+                Label("New macro…", systemImage: "plus")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func presentMacroEditor(_ macro: Macro, _ assignment: (layoutID: UUID, buttonID: UUID)?) {
+        macroAssignment = assignment
+        editingMacro = macro
     }
 }
 
-private struct PhoneControlSettingsGroup: View {
-    @Environment(AppState.self) private var appState
-    @Bindable private var store: PhoneControlsStore
+private struct PhoneControlSettingsRow: View {
+    let layout: PhoneControlLayout
+    let button: PhoneControlButton
+    let index: Int
+    @Bindable var store: PhoneControlsStore
+    let onEditMacro: (Macro, (layoutID: UUID, buttonID: UUID)?) -> Void
 
-    let controlID: String
-    @State private var showIconPicker = false
-    @State private var showMacroRecorder = false
-
-    init(controlID: String, store: PhoneControlsStore) {
-        self.controlID = controlID
-        _store = Bindable(wrappedValue: store)
-    }
-
-    private var controlTitle: String {
-        switch controlID {
-        case "seek_backward": return "Rewind"
-        case "seek_forward":  return "Fast Forward"
-        case "play_pause":    return "Play/Pause"
-        default:               return controlID
-        }
-    }
+    @State private var showingIconPicker = false
 
     var body: some View {
-        let config = store.config(for: controlID)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Text("\(index + 1)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 22, height: 22)
+                    .background(.quaternary, in: Circle())
 
-        settingsGroup(header: controlTitle) {
-            settingsRow("Icon") {
                 Button {
-                    showIconPicker = true
+                    showingIconPicker = true
                 } label: {
-                    Image(systemName: config.symbol)
-                        .font(.system(size: 17, weight: .medium))
-                        .frame(width: 28, height: 28)
+                    Image(systemName: button.symbol)
+                        .font(.system(size: 16, weight: .medium))
+                        .frame(width: 30, height: 28)
                 }
                 .buttonStyle(.bordered)
                 .help("Choose icon")
-            }
 
-            Divider().padding(.leading, 12)
-
-            settingsRow("Label") {
                 TextField("Label", text: labelBinding)
                     .textFieldStyle(.roundedBorder)
-                    .frame(width: 170)
+
+                Toggle("Large", isOn: prominentBinding)
+                    .toggleStyle(.checkbox)
+                    .help("Show this as the one big button on the phone")
+
+                Button { store.moveButton(layoutID: layout.id, buttonID: button.id, by: -1) } label: {
+                    Image(systemName: "arrow.up")
+                }
+                .buttonStyle(.borderless)
+                .disabled(index == 0)
+                .help("Move left")
+                Button { store.moveButton(layoutID: layout.id, buttonID: button.id, by: 1) } label: {
+                    Image(systemName: "arrow.down")
+                }
+                .buttonStyle(.borderless)
+                .disabled(index == layout.buttons.count - 1)
+                .help("Move right")
+                Button(role: .destructive) { store.removeButton(layoutID: layout.id, buttonID: button.id) } label: {
+                    Image(systemName: "minus.circle")
+                }
+                .buttonStyle(.borderless)
+                .disabled(layout.buttons.count == 1)
+                .help("Remove button")
             }
 
-            Divider().padding(.leading, 12)
-
-            settingsRow("Action") {
-                Picker("Action", selection: actionPresetBinding) {
-                    ForEach(PhoneControlAction.Preset.allCases) { preset in
-                        Text(preset.title).tag(preset)
+            HStack(spacing: 8) {
+                Text("Action")
+                    .foregroundStyle(.secondary)
+                    .frame(width: 52, alignment: .trailing)
+                Picker("Action", selection: actionKindBinding) {
+                    ForEach(PhoneControlAction.Kind.allCases) { kind in
+                        Text(kind.title).tag(kind)
                     }
                 }
-                .pickerStyle(.menu)
                 .labelsHidden()
-                .frame(width: 170)
-            }
+                .pickerStyle(.menu)
+                .frame(width: 150)
 
-            switch config.action {
-            case .shortcut(let keyCode, let modifiers):
-                Divider().padding(.leading, 12)
-                settingsRow("Shortcut") {
-                    PhoneShortcutRecorderView(
-                        keyCode: keyCode,
-                        modifiers: modifiers,
-                        onChange: setShortcut
-                    )
-                }
-            case .macro(let steps):
-                Divider().padding(.leading, 12)
-                settingsRow("Macro") {
-                    macroControls(steps: steps)
-                }
-            default:
-                EmptyView()
+                actionDetail
             }
         }
-        .sheet(isPresented: $showIconPicker) {
-            PhoneSymbolPickerView(selectedSymbol: config.symbol) { symbol in
-                updateConfig { $0.symbol = symbol }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .disabled(layout.isBuiltIn)
+        .sheet(isPresented: $showingIconPicker) {
+            PhoneSymbolPickerView(selectedSymbol: button.symbol) { symbol in
+                store.updateButton(layoutID: layout.id, buttonID: button.id) { $0.symbol = symbol }
             }
         }
-        .sheet(isPresented: $showMacroRecorder) {
-            MacroRecorderSheet(initialSteps: macroSteps, onSave: setMacro)
-                .environment(appState)
+    }
+
+    @ViewBuilder
+    private var actionDetail: some View {
+        switch button.action {
+        case .key(let keyCode, let modifiers):
+            PhoneShortcutRecorderView(keyCode: keyCode, modifiers: modifiers) { keyCode, modifiers in
+                store.updateButton(layoutID: layout.id, buttonID: button.id) {
+                    $0.action = .key(keyCode: keyCode, modifiers: modifiers)
+                }
+            }
+            .frame(minWidth: 128)
+            Menu {
+                ForEach(Self.quickKeys, id: \.title) { key in
+                    Button(key.title) {
+                        store.updateButton(layoutID: layout.id, buttonID: button.id) {
+                            $0.action = .key(keyCode: key.keyCode, modifiers: key.modifiers)
+                        }
+                    }
+                }
+            } label: {
+                Image(systemName: "chevron.down.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .help("Common keys")
+        case .mediaKey(let kind):
+            Picker("Media key", selection: Binding(
+                get: { kind },
+                set: { newKind in
+                    store.updateButton(layoutID: layout.id, buttonID: button.id) {
+                        $0.action = .mediaKey(newKind)
+                    }
+                }
+            )) {
+                ForEach(MediaKeyKind.allCases) { kind in
+                    Text(kind.title).tag(kind)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .frame(width: 130)
+        case .macro(let macroID):
+            macroPicker(macroID: macroID)
+        case .textInput(let prompt, let sendReturn):
+            TextField("Prompt shown on the phone", text: Binding(
+                get: { prompt },
+                set: { newPrompt in
+                    store.updateButton(layoutID: layout.id, buttonID: button.id) {
+                        $0.action = .textInput(prompt: newPrompt, sendReturn: sendReturn)
+                    }
+                }
+            ))
+            .textFieldStyle(.roundedBorder)
+            .frame(minWidth: 120)
+            Toggle("Return", isOn: Binding(
+                get: { sendReturn },
+                set: { newValue in
+                    store.updateButton(layoutID: layout.id, buttonID: button.id) {
+                        $0.action = .textInput(prompt: prompt, sendReturn: newValue)
+                    }
+                }
+            ))
+            .toggleStyle(.checkbox)
+            .help("Press Return after typing the text")
+        case .none:
+            Text("No action")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private func macroPicker(macroID: UUID) -> some View {
+        if store.macros.isEmpty {
+            Button("New macro…") {
+                makeMacro()
+            }
+            .buttonStyle(.bordered)
+        } else {
+            HStack(spacing: 6) {
+                Picker("Macro", selection: Binding(
+                    get: { macroID },
+                    set: { newID in
+                        store.updateButton(layoutID: layout.id, buttonID: button.id) {
+                            $0.action = .macro(id: newID)
+                        }
+                    }
+                )) {
+                    ForEach(store.macros) { macro in
+                        Text(macro.name).tag(macro.id)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .frame(width: 130)
+                Menu {
+                    Button("New macro…") { makeMacro() }
+                    Button("Edit…") {
+                        if let macro = store.macro(id: macroID) {
+                            onEditMacro(macro, (layout.id, button.id))
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .help("Create or edit macro")
+            }
         }
     }
 
     private var labelBinding: Binding<String> {
         Binding(
-            get: { store.config(for: controlID).label },
-            set: { value in updateConfig { $0.label = value } }
+            get: { button.label },
+            set: { value in
+                store.updateButton(layoutID: layout.id, buttonID: button.id) { $0.label = value }
+            }
         )
     }
 
-    private var actionPresetBinding: Binding<PhoneControlAction.Preset> {
+    private var prominentBinding: Binding<Bool> {
         Binding(
-            get: { store.config(for: controlID).action.preset },
-            set: { preset in
-                updateConfig { config in
-                    config.action = config.action.replacingPreset(preset)
+            get: { button.prominent },
+            set: { store.setProminent(layoutID: layout.id, buttonID: button.id, isProminent: $0) }
+        )
+    }
+
+    private var actionKindBinding: Binding<PhoneControlAction.Kind> {
+        Binding(
+            get: { button.action.kind },
+            set: { kind in
+                if kind == .macro {
+                    if let macro = store.macros.first {
+                        store.updateButton(layoutID: layout.id, buttonID: button.id) { $0.action = .macro(id: macro.id) }
+                    } else {
+                        makeMacro()
+                    }
+                } else {
+                    store.updateButton(layoutID: layout.id, buttonID: button.id) {
+                        $0.action = button.action.replacingKind(kind)
+                    }
                 }
             }
         )
     }
 
-    private var macroSteps: [MacroStep] {
-        if case .macro(let steps) = store.config(for: controlID).action {
-            return steps
-        }
-        return []
+    private func makeMacro() {
+        onEditMacro(
+            Macro(id: UUID(), name: "New Macro", steps: []),
+            (layout.id, button.id)
+        )
     }
 
-    @ViewBuilder
-    private func macroControls(steps: [MacroStep]) -> some View {
-        VStack(alignment: .trailing, spacing: 6) {
-            HStack(spacing: 8) {
-                Text("\(steps.count) \(steps.count == 1 ? "step" : "steps")")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button("Clear") {
-                    setMacro([])
-                }
-                .buttonStyle(.borderless)
-                .disabled(steps.isEmpty)
-                Button("Record macro…") {
-                    showMacroRecorder = true
-                }
-                .buttonStyle(.bordered)
-            }
-
-            if !appState.hasAccessibilityPermission || !AXIsProcessTrusted() {
-                HStack(alignment: .top, spacing: 6) {
-                    Image(systemName: "info.circle")
-                        .foregroundStyle(.secondary)
-                    Text("Accessibility access is required to record macros.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Button("Grant Access…") {
-                        requestPhoneControlAccessibilityPermission()
-                    }
-                    .buttonStyle(.link)
-                }
-            }
-        }
-        .frame(minWidth: 255, alignment: .trailing)
+    private struct QuickKey {
+        let title: String
+        let keyCode: UInt32
+        let modifiers: UInt32
     }
 
-    private func setShortcut(keyCode: UInt32, modifiers: UInt32) {
-        updateConfig { $0.action = .shortcut(keyCode: keyCode, modifiers: modifiers) }
-    }
-
-    private func setMacro(_ steps: [MacroStep]) {
-        updateConfig { $0.action = .macro(steps) }
-    }
-
-    private func updateConfig(_ update: (inout PhoneControlConfig) -> Void) {
-        var config = store.config(for: controlID)
-        update(&config)
-        store.setConfig(config, for: controlID)
-    }
+    private static let quickKeys = [
+        QuickKey(title: "Left", keyCode: UInt32(kVK_LeftArrow), modifiers: 0),
+        QuickKey(title: "Right", keyCode: UInt32(kVK_RightArrow), modifiers: 0),
+        QuickKey(title: "Up", keyCode: UInt32(kVK_UpArrow), modifiers: 0),
+        QuickKey(title: "Down", keyCode: UInt32(kVK_DownArrow), modifiers: 0),
+        QuickKey(title: "Space", keyCode: UInt32(kVK_Space), modifiers: 0),
+        QuickKey(title: "J", keyCode: UInt32(kVK_ANSI_J), modifiers: 0),
+        QuickKey(title: "K", keyCode: UInt32(kVK_ANSI_K), modifiers: 0),
+        QuickKey(title: "L", keyCode: UInt32(kVK_ANSI_L), modifiers: 0),
+        QuickKey(title: "Shift+Left", keyCode: UInt32(kVK_LeftArrow), modifiers: UInt32(shiftKey)),
+        QuickKey(title: "Shift+Right", keyCode: UInt32(kVK_RightArrow), modifiers: UInt32(shiftKey))
+    ]
 }
 
 private struct PhoneSymbolPickerView: View {
@@ -483,163 +734,244 @@ private struct PhoneShortcutRecorderView: View {
     }
 }
 
-private struct MacroRecorderSheet: View {
-    @Environment(AppState.self) private var appState
+private struct LayoutNameSheet: View {
     @Environment(\.dismiss) private var dismiss
+    let title: String
+    let initialName: String
+    let onSave: (String) -> Void
+    @State private var name: String
 
-    let onSave: ([MacroStep]) -> Void
-
-    @State private var steps: [MacroStep]
-    @State private var isRecording = false
-    @State private var globalMonitor: Any?
-    @State private var localMonitor: Any?
-    @State private var idleTimer: Timer?
-    @State private var lastEventUptime: TimeInterval?
-
-    init(initialSteps: [MacroStep], onSave: @escaping ([MacroStep]) -> Void) {
+    init(title: String, initialName: String, onSave: @escaping (String) -> Void) {
+        self.title = title
+        self.initialName = initialName
         self.onSave = onSave
-        _steps = State(initialValue: initialSteps)
+        _name = State(initialValue: initialName)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(title).font(.headline)
+            TextField("Layout name", text: $name)
+                .textFieldStyle(.roundedBorder)
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                Button("Save") {
+                    onSave(name)
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 330)
+    }
+}
+
+private struct MacroEditorSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let macro: Macro
+    let onSave: (Macro) -> Void
+
+    @State private var name: String
+    @State private var recorder: MacroEventRecorder
+    @State private var isPreviewing = false
+    @State private var previewKeys = Set<UInt32>()
+    @State private var previewTask: Task<Void, Never>?
+
+    init(macro: Macro, onSave: @escaping (Macro) -> Void) {
+        self.macro = macro
+        self.onSave = onSave
+        _name = State(initialValue: macro.name)
+        _recorder = State(initialValue: MacroEventRecorder(initialSteps: macro.steps))
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Record macro")
-                .font(.headline)
-            Text("Press the keys you want to replay. Recording stops after 10 seconds without a key.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Text("Macro editor")
+                    .font(.title3.weight(.semibold))
+                Spacer()
+                Toggle("Preview", isOn: $isPreviewing)
+                    .toggleStyle(.switch)
+                    .disabled(recorder.steps.isEmpty || recorder.isRecording)
+            }
 
-            if !appState.hasAccessibilityPermission || !AXIsProcessTrusted() {
-                HStack(alignment: .top, spacing: 6) {
+            HStack(spacing: 10) {
+                Text("Name")
+                    .foregroundStyle(.secondary)
+                TextField("Macro name", text: $name)
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            if !AXIsProcessTrusted() {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Image(systemName: "info.circle")
                         .foregroundStyle(.secondary)
                     Text("Accessibility access is required to record macros.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Button("Grant Access…") {
-                        requestPhoneControlAccessibilityPermission()
-                    }
-                    .buttonStyle(.link)
+                    Button("Grant Access…") { requestPhoneControlAccessibilityPermission() }
+                        .buttonStyle(.link)
                 }
             }
+
+            VirtualKeyboardView(heldKeyCodes: isPreviewing ? previewKeys : recorder.heldKeyCodes)
 
             HStack {
-                Label("\(steps.count) \(steps.count == 1 ? "step" : "steps")", systemImage: "list.number")
-                    .foregroundStyle(.secondary)
+                Label(
+                    "\(recorder.steps.count) \(recorder.steps.count == 1 ? "step" : "steps")",
+                    systemImage: "list.number"
+                )
+                .foregroundStyle(.secondary)
                 Spacer()
-                Button("Clear") {
-                    steps.removeAll()
-                }
-                .buttonStyle(.borderless)
-                .disabled(steps.isEmpty || isRecording)
-                Button(isRecording ? "Stop" : "Record macro…") {
-                    isRecording ? stopRecording() : startRecording()
+                Button("Clear") { recorder.clear() }
+                    .buttonStyle(.borderless)
+                    .disabled(recorder.steps.isEmpty || recorder.isRecording)
+                Button(recorder.isRecording ? "Stop" : "Record") {
+                    recorder.isRecording ? recorder.stop() : recorder.start()
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(isRecording ? .orange : nil)
-                .disabled(!isRecording && !AXIsProcessTrusted())
+                .tint(recorder.isRecording ? .orange : nil)
+                .disabled(!recorder.isRecording && !AXIsProcessTrusted())
             }
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 6) {
-                    if steps.isEmpty {
-                        Text("No keys recorded")
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    } else {
-                        ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
-                            HStack(spacing: 8) {
-                                Text("\(index + 1)")
-                                    .foregroundStyle(.secondary)
-                                    .frame(width: 22, alignment: .trailing)
-                                Text(phoneControlDisplayString(keyCode: step.keyCode, modifiers: step.modifiers))
-                                    .font(.callout.monospaced())
-                                if index > 0 {
-                                    Text("after \(step.delayMs) ms")
-                                        .font(.caption)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Steps")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 5) {
+                        if recorder.steps.isEmpty {
+                            Text("Press Record, then type the keys to replay. Recording stops after 10 seconds without a key, or with Esc.")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.vertical, 6)
+                        } else {
+                            ForEach(Array(recorder.steps.enumerated()), id: \.offset) { index, step in
+                                HStack(spacing: 8) {
+                                    Text("\(index + 1)")
+                                        .font(.caption.monospacedDigit())
                                         .foregroundStyle(.secondary)
-                                } else {
-                                    Text("starts immediately")
+                                        .frame(width: 24, alignment: .trailing)
+                                    Text(macroStepDescription(step))
+                                        .font(.callout.monospaced())
+                                    Text(index == 0 ? "starts immediately" : "after \(step.delayMs) ms")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
                             }
                         }
                     }
+                    .padding(.vertical, 2)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(height: 142)
             }
-            .frame(maxHeight: 150)
 
             HStack {
                 Spacer()
-                Button("Cancel") {
+                Button {
                     dismiss()
+                } label: {
+                    Text("Cancel")
+                        .foregroundStyle(.black)
                 }
-                Button("Done") {
-                    finish()
+                .buttonStyle(.bordered)
+                Button("Save") {
+                    recorder.stop()
+                    onSave(Macro(
+                        id: macro.id,
+                        name: name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Untitled Macro" : name,
+                        steps: recorder.steps
+                    ))
+                    dismiss()
                 }
                 .keyboardShortcut(.defaultAction)
             }
         }
         .padding(20)
-        .frame(width: 430, height: 390)
-        .onDisappear { stopRecording() }
+        .frame(width: 760, height: 670)
+        .onChange(of: isPreviewing) { _, enabled in
+            enabled ? startPreview() : stopPreview()
+        }
+        .onDisappear {
+            recorder.stop()
+            stopPreview()
+        }
     }
 
-    private func startRecording() {
-        guard AXIsProcessTrusted() else {
-            requestPhoneControlAccessibilityPermission()
-            return
+    private func startPreview() {
+        previewTask?.cancel()
+        previewKeys.removeAll()
+        let steps = recorder.steps
+        previewTask = Task { @MainActor in
+            while !Task.isCancelled {
+                for step in steps {
+                    if step.delayMs > 0 {
+                        try? await Task.sleep(nanoseconds: UInt64(step.delayMs) * 1_000_000)
+                    }
+                    guard !Task.isCancelled else { return }
+                    withAnimation(.easeInOut(duration: 0.12)) {
+                        applyPreview(step)
+                    }
+                }
+                withAnimation(.easeOut(duration: 0.12)) {
+                    previewKeys.removeAll()
+                }
+                // A beat between loops so the start of the macro reads as a start.
+                try? await Task.sleep(nanoseconds: 600_000_000)
+            }
         }
+    }
 
-        isRecording = true
-        lastEventUptime = nil
-        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { event in
-            record(event)
+    private func stopPreview() {
+        previewTask?.cancel()
+        previewTask = nil
+        previewKeys.removeAll()
+    }
+
+    private func applyPreview(_ step: MacroStep) {
+        switch step {
+        case .keyDown(let keyCode, _, _): previewKeys.insert(keyCode)
+        case .keyUp(let keyCode, _, _): previewKeys.remove(keyCode)
         }
-        localMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            record(event)
+    }
+}
+
+@Observable
+private final class MacroEventRecorder {
+    var steps: [MacroStep]
+    var isRecording = false
+    var heldKeyCodes = Set<UInt32>()
+
+    private var globalMonitor: Any?
+    private var localMonitor: Any?
+    private var idleTimer: Timer?
+    private var lastStepTime: TimeInterval?
+
+    init(initialSteps: [MacroStep]) {
+        steps = initialSteps
+    }
+
+    func start() {
+        guard AXIsProcessTrusted(), !isRecording else { return }
+        isRecording = true
+        lastStepTime = nil
+        let mask: NSEvent.EventTypeMask = [.keyDown, .keyUp, .flagsChanged]
+        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: mask) { [weak self] event in
+            DispatchQueue.main.async { self?.record(event) }
+        }
+        // Swallow local key events: while recording, keys must not also type into the sheet.
+        localMonitor = NSEvent.addLocalMonitorForEvents(matching: mask) { [weak self] event in
+            self?.record(event)
             return nil
         }
         armIdleTimer()
     }
 
-    private func record(_ event: NSEvent) {
-        guard isRecording else { return }
-        if event.keyCode == 53 {
-            stopRecording()
-            return
-        }
-
-        let now = ProcessInfo.processInfo.systemUptime
-        let delayMs: UInt32
-        if let lastEventUptime {
-            let elapsed = max(0, min((now - lastEventUptime) * 1_000, Double(UInt32.max)))
-            delayMs = UInt32(elapsed.rounded())
-        } else {
-            delayMs = 0
-        }
-
-        steps.append(MacroStep(
-            keyCode: UInt32(event.keyCode),
-            modifiers: HotkeyManager.carbonModifiers(from: event.modifierFlags),
-            delayMs: delayMs
-        ))
-        lastEventUptime = now
-        armIdleTimer()
-    }
-
-    private func armIdleTimer() {
-        idleTimer?.invalidate()
-        idleTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: false) { _ in
-            stopRecording()
-        }
-    }
-
-    private func stopRecording() {
+    func stop() {
+        guard isRecording || globalMonitor != nil || localMonitor != nil else { return }
         isRecording = false
         if let globalMonitor { NSEvent.removeMonitor(globalMonitor) }
         if let localMonitor { NSEvent.removeMonitor(localMonitor) }
@@ -647,13 +979,177 @@ private struct MacroRecorderSheet: View {
         localMonitor = nil
         idleTimer?.invalidate()
         idleTimer = nil
-        lastEventUptime = nil
+        lastStepTime = nil
+        heldKeyCodes.removeAll()
     }
 
-    private func finish() {
-        stopRecording()
-        onSave(steps)
-        dismiss()
+    func clear() {
+        steps.removeAll()
+        lastStepTime = nil
+    }
+
+    private func record(_ event: NSEvent) {
+        guard isRecording else { return }
+        if event.type == .keyDown, event.keyCode == 53 {
+            stop()
+            return
+        }
+
+        let now = ProcessInfo.processInfo.systemUptime
+        armIdleTimer()
+        let modifiers = HotkeyManager.carbonModifiers(from: event.modifierFlags)
+        switch event.type {
+        case .keyDown:
+            heldKeyCodes.insert(UInt32(event.keyCode))
+            append(.keyDown(keyCode: UInt32(event.keyCode), modifiers: modifiers, delayMs: delay(at: now)), at: now)
+        case .keyUp:
+            heldKeyCodes.remove(UInt32(event.keyCode))
+            append(.keyUp(keyCode: UInt32(event.keyCode), modifiers: modifiers, delayMs: delay(at: now)), at: now)
+        case .flagsChanged:
+            let keyCode = UInt32(event.keyCode)
+            if modifierIsDown(for: event) {
+                heldKeyCodes.insert(keyCode)
+                append(.keyDown(keyCode: keyCode, modifiers: modifiers, delayMs: delay(at: now)), at: now)
+            } else {
+                heldKeyCodes.remove(keyCode)
+                append(.keyUp(keyCode: keyCode, modifiers: modifiers, delayMs: delay(at: now)), at: now)
+            }
+        default:
+            break
+        }
+    }
+
+    private func append(_ step: MacroStep, at time: TimeInterval) {
+        steps.append(step)
+        lastStepTime = time
+    }
+
+    private func delay(at time: TimeInterval) -> UInt32 {
+        guard let lastStepTime else { return 0 }
+        let milliseconds = max(0, min((time - lastStepTime) * 1_000, Double(UInt32.max)))
+        return UInt32(milliseconds.rounded())
+    }
+
+    private func armIdleTimer() {
+        idleTimer?.invalidate()
+        idleTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: false) { [weak self] _ in
+            self?.stop()
+        }
+    }
+
+    private func modifierIsDown(for event: NSEvent) -> Bool {
+        switch event.keyCode {
+        case 54, 55: return event.modifierFlags.contains(.command)
+        case 56, 60: return event.modifierFlags.contains(.shift)
+        case 58, 61: return event.modifierFlags.contains(.option)
+        case 59, 62: return event.modifierFlags.contains(.control)
+        case 57: return event.modifierFlags.contains(.capsLock)
+        case 63: return event.modifierFlags.contains(.function)
+        default: return false
+        }
+    }
+
+}
+
+private struct VirtualKeyboardView: View {
+    let heldKeyCodes: Set<UInt32>
+
+    struct Key: Identifiable {
+        let keyCode: UInt32
+        let label: String
+        let width: CGFloat
+        var id: UInt32 { keyCode }
+    }
+
+    private static let rows: [[Key]] = [
+        [key(53, "esc"), key(122, "F1"), key(120, "F2"), key(99, "F3"), key(118, "F4"), key(96, "F5"), key(97, "F6"), key(98, "F7"), key(100, "F8"), key(101, "F9"), key(109, "F10"), key(103, "F11"), key(111, "F12"), key(105, "F13")],
+        [key(50, "`"), key(18, "1"), key(19, "2"), key(20, "3"), key(21, "4"), key(23, "5"), key(22, "6"), key(26, "7"), key(28, "8"), key(25, "9"), key(29, "0"), key(27, "-"), key(24, "="), key(51, "delete", 1.7)],
+        [key(48, "tab", 1.5), key(12, "Q"), key(13, "W"), key(14, "E"), key(15, "R"), key(17, "T"), key(16, "Y"), key(32, "U"), key(34, "I"), key(31, "O"), key(35, "P"), key(33, "["), key(30, "]"), key(42, "\\", 1.2)],
+        [key(57, "caps", 1.8), key(0, "A"), key(1, "S"), key(2, "D"), key(3, "F"), key(5, "G"), key(4, "H"), key(38, "J"), key(40, "K"), key(37, "L"), key(41, ";"), key(39, "'"), key(36, "return", 1.9)],
+        [key(56, "shift", 2.3), key(6, "Z"), key(7, "X"), key(8, "C"), key(9, "V"), key(11, "B"), key(45, "N"), key(46, "M"), key(43, ","), key(47, "."), key(44, "/"), key(60, "shift", 2.4)],
+        [key(63, "fn", 1.1), key(59, "ctrl", 1.2), key(58, "opt", 1.2), key(55, "cmd", 1.3), key(49, "space", 4.6), key(54, "cmd", 1.3), key(61, "opt", 1.2), key(123, "←"), key(125, "↓"), key(124, "→")]
+    ]
+
+    private static var knownKeyCodes: Set<UInt32> {
+        Set(rows.flatMap { $0.map(\.keyCode) })
+    }
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 16) {
+            VStack(spacing: 4) {
+                ForEach(Array(Self.rows.enumerated()), id: \.offset) { _, row in
+                    KeyboardRow(keys: row, heldKeyCodes: heldKeyCodes)
+                }
+                let unknownCodes = heldKeyCodes.subtracting(Self.knownKeyCodes).sorted()
+                if !unknownCodes.isEmpty {
+                    HStack(spacing: 4) {
+                        Text("Other")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        ForEach(unknownCodes, id: \.self) { keyCode in
+                            KeyCap(label: "Key \(keyCode)", width: 1.4, isHeld: true)
+                        }
+                        Spacer()
+                    }
+                    .padding(.top, 3)
+                }
+            }
+            .padding(10)
+            .background(.background.secondary, in: RoundedRectangle(cornerRadius: 10))
+            .frame(maxWidth: .infinity)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private static func key(_ keyCode: UInt32, _ label: String, _ width: CGFloat = 1) -> Key {
+        Key(keyCode: keyCode, label: label, width: width)
+    }
+}
+
+private struct KeyboardRow: View {
+    let keys: [VirtualKeyboardView.Key]
+    let heldKeyCodes: Set<UInt32>
+
+    var body: some View {
+        GeometryReader { geometry in
+            let spacing = CGFloat(4)
+            let totalWidth = keys.reduce(CGFloat(0)) { $0 + $1.width }
+            let unit = (geometry.size.width - spacing * CGFloat(keys.count - 1)) / totalWidth
+            HStack(spacing: spacing) {
+                ForEach(keys) { key in
+                    KeyCap(label: key.label, width: unit * key.width, isHeld: heldKeyCodes.contains(key.keyCode))
+                }
+            }
+        }
+        .frame(height: 30)
+    }
+}
+
+private struct KeyCap: View {
+    let label: String
+    let width: CGFloat
+    let isHeld: Bool
+
+    var body: some View {
+        Text(label)
+            .font(.system(size: 9, weight: .medium, design: .rounded))
+            .foregroundStyle(isHeld ? .white : .primary)
+            .lineLimit(1)
+            .frame(width: width, height: 30)
+            .background(isHeld ? Color.accentColor : Color.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 5))
+            .overlay(
+                RoundedRectangle(cornerRadius: 5)
+                    .stroke(isHeld ? Color.accentColor : Color.primary.opacity(0.12), lineWidth: 0.5)
+            )
+    }
+}
+
+private func macroStepDescription(_ step: MacroStep) -> String {
+    switch step {
+    case .keyDown(let keyCode, let modifiers, _):
+        return phoneControlDisplayString(keyCode: keyCode, modifiers: modifiers)
+    case .keyUp(let keyCode, let modifiers, _):
+        return "\(phoneControlDisplayString(keyCode: keyCode, modifiers: modifiers)) up"
     }
 }
 

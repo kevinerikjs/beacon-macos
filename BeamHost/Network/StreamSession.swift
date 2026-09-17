@@ -338,7 +338,7 @@ final class StreamSession {
         switch message.type {
         case .mediaKey:
             if case .mediaKey(let payload) = message.payload {
-                MediaKeyDispatcher.send(payload.key)
+                MediaKeyDispatcher.send(payload)
             }
         case .pong:
             lastPongReceivedAt = Date()
