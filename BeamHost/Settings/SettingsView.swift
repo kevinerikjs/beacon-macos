@@ -1354,6 +1354,18 @@ private struct DefaultWindowPicker: View {
         let title: String
     }
 
+    /// "App" when the title adds nothing, else "App: title" with the title cut to a readable
+    /// length. Terminal and browser titles run to a full sentence; the menu is not the place.
+    private static func label(for choice: Choice) -> String {
+        let title = choice.title.trimmingCharacters(in: .whitespaces)
+        if title.isEmpty || title.caseInsensitiveCompare(choice.appName) == .orderedSame {
+            return choice.appName
+        }
+        let limit = 34
+        let short = title.count > limit ? String(title.prefix(limit - 1)).trimmingCharacters(in: .whitespaces) + "…" : title
+        return "\(choice.appName): \(short)"
+    }
+
     var body: some View {
         let stored = appState.defaultWindow.map { Choice(bundleID: $0.bundleID, appName: $0.appName, title: $0.title) }
         var choices: [Choice] = windows.compactMap { window in
@@ -1377,7 +1389,7 @@ private struct DefaultWindowPicker: View {
             Text("Full display").tag(Choice?.none)
             if !unique.isEmpty { Divider() }
             ForEach(unique, id: \.self) { choice in
-                Text("\(choice.appName): \(choice.title)")
+                Text(Self.label(for: choice))
                     .lineLimit(1)
                     .tag(Choice?.some(choice))
             }
