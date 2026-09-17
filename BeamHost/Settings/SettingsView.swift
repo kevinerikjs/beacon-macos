@@ -500,7 +500,6 @@ private struct PhoneControlSettingsRow: View {
         case .macro(let macroID):
             macroPicker(macroID: macroID)
         case .textInput:
-            Spacer(minLength: 0)
             Button { showingTextInputInfo.toggle() } label: {
                 Image(systemName: "info.circle")
                     .foregroundStyle(.secondary)
@@ -513,6 +512,7 @@ private struct PhoneControlSettingsRow: View {
                     .frame(width: 260, alignment: .leading)
                     .padding(12)
             }
+            Spacer(minLength: 0)
         case .none:
             Spacer(minLength: 0)
             Text("No action")
