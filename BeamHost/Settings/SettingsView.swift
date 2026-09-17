@@ -479,10 +479,11 @@ private struct PhoneControlSettingsRow: View {
                     }
                 }
             } label: {
-                Image(systemName: "chevron.down.circle")
+                Text("Common")
             }
-            .menuStyle(.borderlessButton)
-            .help("Common keys")
+            .menuStyle(.button)
+            .fixedSize()
+            .help("Pick a common key")
         case .mediaKey(let kind):
             Picker("Media key", selection: Binding(
                 get: { kind },
