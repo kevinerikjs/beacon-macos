@@ -70,8 +70,8 @@ enum PhoneControlAction: Codable, Equatable {
         switch kind {
         case .key: return .key(keyCode: UInt32(kVK_Space), modifiers: 0)
         case .mediaKey: return .mediaKey(.playPause)
-        case .macro: return .none
-        case .textInput: return .textInput(prompt: "Type on the Mac", sendReturn: true)
+        case .macro: return .macro(id: PhoneControlsStore.shared.macros.first?.id ?? UUID())
+        case .textInput: return .textInput(prompt: "", sendReturn: true)
         case .none: return .none
         }
     }

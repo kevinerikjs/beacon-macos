@@ -312,12 +312,13 @@ struct ControlsSettingsTab: View {
                 .frame(width: 185)
             }
             Divider().padding(.leading, 12)
+            // Four equal-width buttons filling the row, like a segmented toolbar.
             HStack(spacing: 8) {
-                Button("New") { store.createLayout() }
-                Button("Duplicate") { store.duplicateLayout(store.activeLayout) }
-                Button("Rename") { showingRenameLayout = true }
+                Button { store.createLayout() } label: { Text("New").frame(maxWidth: .infinity) }
+                Button { store.duplicateLayout(store.activeLayout) } label: { Text("Duplicate").frame(maxWidth: .infinity) }
+                Button { showingRenameLayout = true } label: { Text("Rename").frame(maxWidth: .infinity) }
                     .disabled(store.activeLayout.isBuiltIn)
-                Button("Delete", role: .destructive) { showingDeleteLayout = true }
+                Button(role: .destructive) { showingDeleteLayout = true } label: { Text("Delete").frame(maxWidth: .infinity) }
                     .disabled(store.activeLayout.isBuiltIn)
             }
             .buttonStyle(.bordered)
@@ -434,10 +435,13 @@ private struct PhoneControlSettingsRow: View {
                 .help("Remove button")
             }
 
-            HStack(spacing: 8) {
+            // Lines up under the row above: the label spans the badge and icon column, the
+            // kind picker starts where the label field starts, and the detail control is
+            // always the same 130pt menu whatever the kind.
+            HStack(spacing: 10) {
                 Text("Action")
                     .foregroundStyle(.secondary)
-                    .frame(width: 52, alignment: .trailing)
+                    .frame(width: 62, alignment: .leading)
                 Picker("Action", selection: actionKindBinding) {
                     ForEach(PhoneControlAction.Kind.allCases) { kind in
                         Text(kind.title).tag(kind)
@@ -448,6 +452,7 @@ private struct PhoneControlSettingsRow: View {
                 .frame(width: 138)
 
                 actionDetail
+                Spacer(minLength: 0)
             }
         }
         .padding(.horizontal, 12)
@@ -487,72 +492,57 @@ private struct PhoneControlSettingsRow: View {
             .frame(width: 130)
         case .macro(let macroID):
             macroPicker(macroID: macroID)
-        case .textInput(let prompt, let sendReturn):
-            TextField("Prompt shown on the phone", text: Binding(
-                get: { prompt },
-                set: { newPrompt in
-                    store.updateButton(layoutID: layout.id, buttonID: button.id) {
-                        $0.action = .textInput(prompt: newPrompt, sendReturn: sendReturn)
-                    }
-                }
-            ))
-            .textFieldStyle(.roundedBorder)
-            .frame(minWidth: 120)
-            Toggle("Return", isOn: Binding(
-                get: { sendReturn },
-                set: { newValue in
-                    store.updateButton(layoutID: layout.id, buttonID: button.id) {
-                        $0.action = .textInput(prompt: prompt, sendReturn: newValue)
-                    }
-                }
-            ))
-            .toggleStyle(.checkbox)
-            .help("Press Return after typing the text")
+        case .textInput:
+            Text("Typed, then Return")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .fixedSize()
         case .none:
             Text("No action")
                 .font(.callout)
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .fixedSize()
         }
     }
 
-    @ViewBuilder
     private func macroPicker(macroID: UUID) -> some View {
-        if store.macros.isEmpty {
-            Button("New macro…") {
-                makeMacro()
+        // Same 130pt menu as the other actions; New and Edit live inside it so nothing else
+        // needs room on the row.
+        let newTag = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+        let editTag = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
+        return Picker("Macro", selection: Binding(
+            get: { macroID },
+            set: { selected in
+                if selected == newTag {
+                    makeMacro()
+                } else if selected == editTag {
+                    if let macro = store.macro(id: macroID) {
+                        onEditMacro(macro, (layout.id, button.id))
+                    }
+                } else {
+                    store.updateButton(layoutID: layout.id, buttonID: button.id) {
+                        $0.action = .macro(id: selected)
+                    }
+                }
             }
-            .buttonStyle(.bordered)
-        } else {
-            HStack(spacing: 6) {
-                Picker("Macro", selection: Binding(
-                    get: { macroID },
-                    set: { newID in
-                        store.updateButton(layoutID: layout.id, buttonID: button.id) {
-                            $0.action = .macro(id: newID)
-                        }
-                    }
-                )) {
-                    ForEach(store.macros) { macro in
-                        Text(macro.name).tag(macro.id)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .frame(width: 130)
-                Menu {
-                    Button("New macro…") { makeMacro() }
-                    Button("Edit…") {
-                        if let macro = store.macro(id: macroID) {
-                            onEditMacro(macro, (layout.id, button.id))
-                        }
-                    }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                }
-                .menuStyle(.borderlessButton)
-                .help("Create or edit macro")
+        )) {
+            if store.macro(id: macroID) == nil {
+                Text("Choose macro").tag(macroID)
+            }
+            ForEach(store.macros) { macro in
+                Text(macro.name).tag(macro.id)
+            }
+            Divider()
+            Text("New macro…").tag(newTag)
+            if store.macro(id: macroID) != nil {
+                Text("Edit macro…").tag(editTag)
             }
         }
+        .labelsHidden()
+        .pickerStyle(.menu)
+        .frame(width: 130)
     }
 
     private var labelBinding: Binding<String> {
@@ -676,8 +666,9 @@ struct QuickKey {
     let modifiers: UInt32
 }
 
-/// One control for a key action: a menu showing the current key, with common keys and a
-/// "Record key…" item; while recording it turns into an orange button until a key is pressed.
+/// One control for a key action, drawn as the same 130pt menu picker the other actions use.
+/// The list is the current key, "Record key…" and the common keys; while recording it turns
+/// into an orange button until a key is pressed (Esc cancels).
 private struct PhoneShortcutRecorderView: View {
     let keyCode: UInt32
     let modifiers: UInt32
@@ -687,33 +678,44 @@ private struct PhoneShortcutRecorderView: View {
     @State private var isRecording = false
     @State private var monitor: Any?
 
+    private static let recordTag = "__record__"
+    private var currentTag: String { "\(keyCode):\(modifiers)" }
+    private func tag(_ key: QuickKey) -> String { "\(key.keyCode):\(key.modifiers)" }
+
     var body: some View {
         Group {
             if isRecording {
                 Button { stopRecording() } label: {
                     Text("Press a key…")
-                        .font(.callout.monospaced())
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
                 .tint(.orange)
             } else {
-                Menu {
-                    Button("Record key…") { startRecording() }
-                    Divider()
-                    ForEach(quickKeys, id: \.title) { key in
-                        Button(key.title) { onChange(key.keyCode, key.modifiers) }
+                Picker("Key", selection: Binding(
+                    get: { currentTag },
+                    set: { selected in
+                        if selected == Self.recordTag {
+                            startRecording()
+                        } else if let key = quickKeys.first(where: { tag($0) == selected }) {
+                            onChange(key.keyCode, key.modifiers)
+                        }
                     }
-                } label: {
-                    Text(phoneControlDisplayString(keyCode: keyCode, modifiers: modifiers))
-                        .font(.callout.monospaced())
-                        .frame(maxWidth: .infinity)
+                )) {
+                    if !quickKeys.contains(where: { tag($0) == currentTag }) {
+                        Text(phoneControlDisplayString(keyCode: keyCode, modifiers: modifiers)).tag(currentTag)
+                    }
+                    ForEach(quickKeys, id: \.title) { key in
+                        Text(key.title).tag(tag(key))
+                    }
+                    Divider()
+                    Text("Record key…").tag(Self.recordTag)
                 }
-                .menuStyle(.button)
-                .frame(width: 136)
+                .labelsHidden()
+                .pickerStyle(.menu)
             }
         }
-        .frame(width: 136)
+        .frame(width: 130)
         .help("Pick a common key or record any key or shortcut")
         .onDisappear { stopRecording() }
     }
