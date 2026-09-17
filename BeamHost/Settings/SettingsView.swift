@@ -219,7 +219,7 @@ struct ControlsSettingsTab: View {
             VStack(alignment: .leading, spacing: 16) {
                 Text("Phone controls")
                     .font(.title3.weight(.semibold))
-                Text("Build up to eight buttons for your iPhone, then choose the active layout.")
+                Text("Each layout has up to eight buttons. The phone shows the active layout.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
 
@@ -340,7 +340,7 @@ struct ControlsSettingsTab: View {
     private var macroLibrary: some View {
         settingsGroup(header: "Macro library") {
             if store.macros.isEmpty {
-                Text("Create a macro to reuse it across buttons and layouts.")
+                Text("A macro is a recorded key sequence. Any button in any layout can play it.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -402,10 +402,10 @@ private struct PhoneControlSettingsRow: View {
     @State private var showingLiveKeyboardInfo = false
     @State private var showingClickInfo = false
 
-    private static let liveKeyboardInfo = "Tap this button on the phone and its keyboard comes up. Each key you press is typed on the Mac at once, into the app that has keyboard focus. Tap the button again, or close the keyboard, to stop."
-    private static let clickInfo = "Tap this button on the phone to turn click mode on. While it is on, each tap on the stream sends a mouse click to the same point on the Mac. With Left or right, the phone shows a switch for which button. Tap the button again to turn it off."
+    private static let liveKeyboardInfo = "Tap this button on the phone to open its keyboard. Each key you press is typed on the Mac at once, into the app that has keyboard focus. Tap the button again, or close the keyboard, to stop."
+    private static let clickInfo = "Tap this button on the phone to start click mode. Each tap on the stream then clicks the same point on the Mac. With Left or right, the phone shows a switch for the mouse button. Tap the button again to stop."
 
-    private static let textInputInfo = "Tap this button on the phone and Beam asks you for text. Beacon types that text into the app that has keyboard focus on the Mac, then presses Return."
+    private static let textInputInfo = "Tap this button on the phone to open a text box. Beacon types the text into the app that has keyboard focus on the Mac, then presses Return."
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -935,7 +935,7 @@ private struct MacroEditorSheet: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 5) {
                         if recorder.steps.isEmpty {
-                            Text("Press Record, then type the keys to replay. Recording stops after 10 seconds without a key, or with Esc.")
+                            Text("Press Record, then press the keys in order. Recording stops after 10 seconds without a key, or when you press Esc.")
                                 .font(.callout)
                                 .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1292,7 +1292,7 @@ struct DisplaySettingsTab: View {
                 settingsRow("Capture") {
                     DefaultWindowPicker()
                 }
-                Text("What a phone sees when the stream starts. A window is matched by app and title; if that window is gone, another window of the same app, else the full display.")
+                Text("The stream starts on this. Beacon looks for the same window by app and title. If it is closed, Beacon uses another window of that app. If the app has no window, Beacon uses the full display.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1315,7 +1315,7 @@ struct DisplaySettingsTab: View {
                     .frame(width: 140)
                 }
                 if appState.qualityManager.preferredPreset == .auto {
-                    Text("Auto adjusts resolution and frame rate based on connection quality reported by the iOS app.")
+                    Text("Auto sets the resolution and frame rate from the connection quality the phone reports.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
