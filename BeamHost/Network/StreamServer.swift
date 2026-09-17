@@ -22,8 +22,12 @@ final class StreamServer {
     /// session sendQueues, and encoder callbacks (which all run on different threads).
     private let sessionsQueue = DispatchQueue(label: "com.beam.server.sessions")
 
-    /// Most-recent SPS/PPS blob, sent immediately to each newly-authenticated session.
+    /// Most-recent parameter-set blob, sent immediately to each newly-authenticated session.
     private var cachedSpsPps: Data? = nil
+    /// Codec the `cachedSpsPps` blob belongs to. Sent as the .spsPps packet's codec flag so the
+    /// receiver builds the matching (H.264 vs HEVC) format description. Kept beside the blob so
+    /// an immediate resend can never label a cached blob with the wrong codec.
+    private var cachedVideoCodec: BeamVideoCodec = .h264
 
     // Pipeline components (shared across sessions; one capture, multiple outputs)
     private let screenCapture: ScreenCapture
@@ -46,6 +50,33 @@ final class StreamServer {
             activeSessions.values.contains { $0.negotiatedAudioCodec == .aacLC }
         }
         audioEncoder.isAACOutputEnabled = needed
+    }
+
+    /// The codec the single shared encoder should run. One capture feeds every session the same
+    /// NAL stream, so HEVC is only safe when the host can encode it AND every connected client
+    /// negotiated it — a single H.264-only client drops the whole stream back to H.264. No live
+    /// sessions ⇒ H.264, the permanent default.
+    private func desiredVideoCodec() -> BeamVideoCodec {
+        guard VideoEncoder.isHEVCEncodeSupported else { return .h264 }
+        return sessionsQueue.sync {
+            guard !activeSessions.isEmpty else { return .h264 }
+            return activeSessions.values.allSatisfy { $0.negotiatedVideoCodec == .hevc } ? .hevc : .h264
+        }
+    }
+
+    /// Re-evaluate the shared encoder's codec against the current session set and reconfigure if
+    /// it changed. Reconfiguring resets parameter sets, so the stale cached blob is cleared and a
+    /// fresh keyframe forced — fresh VPS/SPS/PPS + IDR then fan out to every session, which each
+    /// rebuild their format description for the new codec. Only meaningful while capture is live.
+    private func refreshVideoCodec() {
+        guard captureStarted else { return }
+        let desired = desiredVideoCodec()
+        guard desired != videoEncoder.codec else { return }
+        logger.info("Video codec change: \(self.videoEncoder.codec.wireName) → \(desired.wireName)")
+        videoEncoder.reconfigure(codec: desired)
+        cachedSpsPps = nil
+        cachedVideoCodec = desired
+        videoEncoder.requestKeyframe()
     }
 
     /// Continuous watchdog that detects a wedged capture pipeline while clients are connected.
@@ -185,10 +216,15 @@ final class StreamServer {
         Task {
             await startCaptureIfNeeded()
 
-            // Send cached SPS/PPS so the new client can decode immediately,
-            // then force an IDR so it doesn't have to wait up to 2 seconds for the next keyframe.
+            // A newly-joined client may force the shared encoder down from HEVC to H.264 (it's
+            // H.264-only while others were on HEVC). refreshVideoCodec reconfigures and clears
+            // the stale cache in that case, so the resend below is never a wrong-codec blob.
+            refreshVideoCodec()
+
+            // Send cached parameter sets so the new client can decode immediately, then force an
+            // IDR so it doesn't have to wait up to 2 seconds for the next keyframe.
             if let cached = cachedSpsPps {
-                session.send(spsPps: cached)
+                session.send(spsPps: cached, codec: cachedVideoCodec)
             }
             videoEncoder.requestKeyframe()
         }
@@ -208,6 +244,8 @@ final class StreamServer {
         guard let remaining else { return }  // Already removed — nothing to do
         logger.info("Session disconnected: \(session.id). Active sessions: \(remaining)")
         refreshAACOutputEnabled()
+        // A departing H.264-only client may let the remaining sessions upgrade to HEVC.
+        if remaining > 0 { refreshVideoCodec() }
 
         if remaining == 0 {
             stopCaptureWatchdog()
@@ -290,7 +328,7 @@ final class StreamServer {
     /// client and force an IDR so the picture comes back within a frame or two.
     func clientReleasedVideoHold(_ session: StreamSession) {
         if let cached = cachedSpsPps {
-            session.send(spsPps: cached)
+            session.send(spsPps: cached, codec: cachedVideoCodec)
         }
         videoEncoder.requestKeyframe()
         logger.info("Video hold released — restated parameter sets and requested a keyframe")
@@ -385,7 +423,7 @@ final class StreamServer {
             if stillActive {
                 if let cached = cachedSpsPps {
                     let sessions = sessionsQueue.sync { Array(activeSessions.values) }
-                    sessions.forEach { $0.send(spsPps: cached) }
+                    sessions.forEach { $0.send(spsPps: cached, codec: cachedVideoCodec) }
                 }
                 videoEncoder.requestKeyframe()
             }
@@ -413,6 +451,9 @@ final class StreamServer {
                 initialWindow: resolvedPendingWindow,
                 initialLockedViewport: pendingLockedViewportRect
             )
+            // Pick the codec for this capture from the sessions already authenticated: HEVC only
+            // if the host can encode it and every connected client negotiated it, else H.264.
+            videoEncoder.setInitialCodec(desiredVideoCodec())
             try videoEncoder.start()
             try audioEncoder.start()
 
@@ -612,11 +653,11 @@ extension StreamServer: VideoEncoderDelegate {
         sessions.forEach { $0.send(videoData: data, pts: presentationTime, isKeyframe: isKeyframe) }
     }
 
-    func videoEncoder(_ encoder: VideoEncoder, didEncodeParameterSets spsData: Data, ppsData: Data) {
-        let combined = spsData + ppsData
-        cachedSpsPps = combined
+    func videoEncoder(_ encoder: VideoEncoder, didEncodeParameterSets data: Data, codec: BeamVideoCodec) {
+        cachedSpsPps = data
+        cachedVideoCodec = codec
         let sessions = sessionsQueue.sync { Array(activeSessions.values) }
-        sessions.forEach { $0.send(spsPps: combined) }
+        sessions.forEach { $0.send(spsPps: data, codec: codec) }
     }
 }
 

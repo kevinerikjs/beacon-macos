@@ -294,6 +294,60 @@ enum BeamAudioCodec: UInt8 {
     }
 }
 
+// MARK: - Video Codec (BeamPacketHeader.flags for packet type .spsPps)
+//
+// The video codec is negotiated exactly like the audio codec (BeamAudioCodec), one layer up.
+// The CAPABILITY is negotiated out of band via BeamPairingMessage.supportedVideoCodecs, and the
+// authoritative per-stream signal is the low nibble of BeamPacketHeader.flags on the .spsPps
+// packet — because the parameter sets are what tell the receiver whether to build an H.264 or
+// an HEVC format description (H.264 carries SPS+PPS; HEVC carries VPS+SPS+PPS). Frame packets
+// (.video/.videoIDR) need no codec flag: they decode against the format description already
+// built from the parameter sets.
+//
+// SAFETY, mirrored from BeamAudioCodec: every Beacon ever shipped sends .spsPps with flags = 0
+// and every Beam ever shipped ignored the flags byte, so codec id 0 is permanently H.264. HEVC
+// (id 1) may ONLY be sent to a client that advertised it in supportedVideoCodecs on the current
+// connection. A single shared encoder feeds every session, so the host uses HEVC only when
+// EVERY connected client supports it, and falls the whole stream back to H.264 otherwise.
+enum BeamVideoCodec: UInt8 {
+    /// H.264 High profile. The legacy wire format and the permanent default.
+    case h264 = 0x00
+    /// HEVC (H.265) Main profile. ~40-50% less bitrate at equal quality, hardware-encoded on
+    /// the Mac and hardware-decoded on the iPhone. Used only when both peers advertise it.
+    case hevc = 0x01
+
+    /// Mask applied to BeamPacketHeader.flags before interpreting a .spsPps packet's codec.
+    static let flagsMask: UInt8 = 0x0F
+
+    /// Value written into BeamPacketHeader.flags for a .spsPps packet in this codec.
+    var packetFlags: UInt8 { rawValue }
+
+    /// Decodes a .spsPps packet's flags byte. An unassigned codec id falls back to H.264
+    /// rather than dropping: a legacy host sends flags = 0 (H.264), and any future-unknown id
+    /// is safest interpreted as the permanent default than as a decode we can't perform.
+    init(packetFlags: UInt8) {
+        self = BeamVideoCodec(rawValue: packetFlags & BeamVideoCodec.flagsMask) ?? .h264
+    }
+
+    /// Stable string used in BeamPairingMessage.supportedVideoCodecs / .selectedVideoCodec.
+    /// Strings, not an enum, so an unknown future codec can never fail decoding of the whole
+    /// pairing message (which would break authentication itself).
+    var wireName: String {
+        switch self {
+        case .h264: return "h264"
+        case .hevc: return "hevc"
+        }
+    }
+
+    init?(wireName: String) {
+        switch wireName {
+        case "h264": self = .h264
+        case "hevc": self = .hevc
+        default:     return nil
+        }
+    }
+}
+
 // MARK: - Controller Input (packet type .input)
 //
 // Beacon does not decode controller reports. Replaying them into a virtual gamepad
@@ -477,6 +531,27 @@ struct BeamPairingMessage: Codable {
     /// packet is always that packet's BeamPacketHeader.flags, because the host may fall back
     /// to PCM mid-session if its encoder fails. `nil` = host predates negotiation = PCM.
     var selectedAudioCodec: String? = nil
+
+    /// iOS → macOS. Wire names of the video codecs this client can decode, most-preferred
+    /// first (e.g. ["hevc", "h264"]). Sent on `hello` and on EVERY `authRequest`.
+    ///
+    /// `nil` (or absence of "hevc") is the load-bearing case: a client that omits this field
+    /// predates video codec negotiation and can decode ONLY H.264. The host MUST then encode
+    /// H.264 for the whole session — feeding such a client an HEVC stream would leave it unable
+    /// to build a format description and the picture would never appear. Absence is never
+    /// treated optimistically. An EMPTY array means the same thing as ["h264"].
+    ///
+    /// Typed as [String] rather than [BeamVideoCodec] on purpose: an unknown enum case would
+    /// fail decoding of the ENTIRE pairing message, which would break authentication itself.
+    /// Unknown strings must be silently ignored. Keep in sync with beam-ios Protocol.swift.
+    var supportedVideoCodecs: [String]? = nil
+
+    /// macOS → iOS. Wire name of the codec the host negotiated for this client, echoed on
+    /// `authSuccess`. Diagnostic/telemetry only — the authority for how to decode video is
+    /// always the .spsPps packet's BeamPacketHeader.flags, because the shared encoder may run
+    /// H.264 for everyone if any other connected client can't do HEVC, or fall back to H.264
+    /// if the HEVC encoder can't be created. `nil` = host predates negotiation = H.264.
+    var selectedVideoCodec: String? = nil
 }
 
 // MARK: - Helpers

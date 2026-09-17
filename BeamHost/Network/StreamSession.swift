@@ -29,6 +29,10 @@ final class StreamSession {
     /// per-connection property: never derived from a prior connection, a stored capability,
     /// or the paired-device record.
     private(set) var negotiatedAudioCodec: BeamAudioCodec = .pcmFloat32
+    /// The video codec this client can decode, resolved at auth. HEVC only if the client
+    /// advertised it, else H.264. The shared encoder aggregates this across all sessions
+    /// (see StreamServer.desiredVideoCodec), so it is a capability, not a guarantee.
+    private(set) var negotiatedVideoCodec: BeamVideoCodec = .h264
 
     private var sharedSecret: SymmetricKey?
     private(set) var authenticatedDeviceID: String?
@@ -270,6 +274,13 @@ final class StreamSession {
         negotiatedAudioCodec = (!forcePCM && advertised.contains(BeamAudioCodec.aacLC.wireName))
             ? .aacLC : .pcmFloat32
 
+        // Video codec negotiation, same shape as audio. Absence of the field, or absence of
+        // "hevc" within it, means an H.264-only client — never treated optimistically, because
+        // an HEVC stream to such a client would leave it unable to build a format description
+        // and the picture would never appear.
+        let advertisedVideo = message.supportedVideoCodecs ?? []
+        negotiatedVideoCodec = advertisedVideo.contains(BeamVideoCodec.hevc.wireName) ? .hevc : .h264
+
         // Success
         isAuthenticated = true
         sharedSecret = SymmetricKey(data: device.sharedSecret)
@@ -283,11 +294,12 @@ final class StreamSession {
             tailscaleHosts: TailscaleAddress.advertisedHosts(),
             supportsRemoteAccess: true,
             supportsVideoHold: true,
-            selectedAudioCodec: negotiatedAudioCodec.wireName
+            selectedAudioCodec: negotiatedAudioCodec.wireName,
+            selectedVideoCodec: negotiatedVideoCodec.wireName
         ))
 
         server?.sessionAuthenticated(self, deviceName: device.name)
-        logger.info("Session authenticated for device '\(device.name)' — audio codec \(self.negotiatedAudioCodec.wireName)")
+        logger.info("Session authenticated for device '\(device.name)' — audio \(self.negotiatedAudioCodec.wireName), video \(self.negotiatedVideoCodec.wireName)")
     }
 
     private func handleHello(_ message: BeamPairingMessage) {
@@ -436,9 +448,9 @@ final class StreamSession {
 
     // MARK: - Send Video
 
-    func send(spsPps data: Data) {
+    func send(spsPps data: Data, codec: BeamVideoCodec) {
         guard isAuthenticated else { return }
-        sendUDP(type: .spsPps, flags: 0, payload: data)
+        sendUDP(type: .spsPps, flags: codec.packetFlags, payload: data)
     }
 
     func send(videoData: Data, pts: CMTime, isKeyframe: Bool) {

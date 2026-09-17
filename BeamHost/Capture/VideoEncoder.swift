@@ -1,5 +1,5 @@
 // VideoEncoder.swift
-// Hardware-accelerated H.264 encoding via VideoToolbox VTCompressionSession.
+// Hardware-accelerated H.264 / HEVC encoding via VideoToolbox VTCompressionSession.
 // Produces Annex B NAL units ready for network transmission.
 
 import VideoToolbox
@@ -13,7 +13,11 @@ private let logger = Logger(subsystem: "com.beam.beacon", category: "VideoEncode
 protocol VideoEncoderDelegate: AnyObject {
     /// Called for each encoded video sample. `isKeyframe` is true for IDR frames.
     func videoEncoder(_ encoder: VideoEncoder, didEncodeFrame data: Data, presentationTime: CMTime, isKeyframe: Bool)
-    func videoEncoder(_ encoder: VideoEncoder, didEncodeParameterSets spsData: Data, ppsData: Data)
+    /// Called once per compression session when the parameter sets are first available.
+    /// `data` is the full Annex B blob (H.264: SPS+PPS; HEVC: VPS+SPS+PPS). `codec` is the
+    /// codec the session ACTUALLY started with, which may differ from the requested one if the
+    /// HEVC encoder could not be created and the session fell back to H.264.
+    func videoEncoder(_ encoder: VideoEncoder, didEncodeParameterSets data: Data, codec: BeamVideoCodec)
 }
 
 // MARK: - VideoEncoder
@@ -31,18 +35,49 @@ final class VideoEncoder {
     private var frameRate: Double
     private var bitrateBps: Int
 
-    /// Whether parameter sets (SPS/PPS) have been sent for this session.
+    /// Codec the encoder is currently configured for. Read/written on `encoderQueue`; the
+    /// delegate reports the value the session actually started with, which is the authority for
+    /// the .spsPps packet's codec flag. Defaults to H.264 (the permanent wire default).
+    private(set) var codec: BeamVideoCodec = .h264
+
+    /// Whether parameter sets have been sent for this session.
     private var parameterSetsSent = false
 
     /// Set to true (on encoderQueue) to force the next frame to be an IDR keyframe.
     private var forceKeyframeFlag = false
 
-    init(width: Int32, height: Int32, frameRate: Double = 30, bitrateMbps: Double = 6) {
+    init(width: Int32, height: Int32, frameRate: Double = 30, bitrateMbps: Double = 6, codec: BeamVideoCodec = .h264) {
         self.width = width
         self.height = height
         self.frameRate = frameRate
         self.bitrateBps = Int(bitrateMbps * 1_000_000)
+        self.codec = codec
     }
+
+    /// Whether this Mac can hardware-encode HEVC. Probed once and cached. Near-universal on the
+    /// Macs that meet Beacon's macOS 14 floor (all Apple Silicon, Intel 2017+), but a `false`
+    /// here keeps the negotiation from ever choosing a codec the hardware can't produce.
+    static let isHEVCEncodeSupported: Bool = {
+        var session: VTCompressionSession?
+        let spec: [String: Any] = [
+            kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder as String: true
+        ]
+        let status = VTCompressionSessionCreate(
+            allocator: kCFAllocatorDefault,
+            width: 640, height: 360,
+            codecType: kCMVideoCodecType_HEVC,
+            encoderSpecification: spec as CFDictionary,
+            imageBufferAttributes: nil,
+            compressedDataAllocator: nil,
+            outputCallback: nil,
+            refcon: nil,
+            compressionSessionOut: &session
+        )
+        if let session { VTCompressionSessionInvalidate(session) }
+        let supported = status == noErr && session != nil
+        logger.info("HEVC hardware encode supported: \(supported)")
+        return supported
+    }()
 
     // MARK: - Session Management
 
@@ -50,22 +85,32 @@ final class VideoEncoder {
         try encoderQueue.sync { try startInternal() }
     }
 
+    /// Choose the codec the NEXT `start()` will use. No-op once a session is running — use
+    /// `reconfigure(codec:)` to change codec mid-stream. Serialised on `encoderQueue` so it
+    /// can't race the start it precedes.
+    func setInitialCodec(_ newCodec: BeamVideoCodec) {
+        encoderQueue.sync { if session == nil { codec = newCodec } }
+    }
+
     private func startInternal() throws {
         guard session == nil else { return }
 
-        var compressionSession: VTCompressionSession?
-
-        // Use hardware encoder exclusively
+        // Use hardware encoder exclusively.
         let encoderSpec: [String: Any] = [
             kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder as String: true,
             kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder as String: true
         ]
 
-        let status = VTCompressionSessionCreate(
+        // Try the requested codec; if HEVC can't be created on this hardware, fall the session
+        // back to H.264 rather than leaving the pipeline with no encoder. The delegate reports
+        // whichever codec actually started, so the .spsPps packet's codec flag stays truthful
+        // and the receiver builds the matching format description.
+        var compressionSession: VTCompressionSession?
+        var status = VTCompressionSessionCreate(
             allocator: kCFAllocatorDefault,
             width: width,
             height: height,
-            codecType: kCMVideoCodecType_H264,
+            codecType: codec == .hevc ? kCMVideoCodecType_HEVC : kCMVideoCodecType_H264,
             encoderSpecification: encoderSpec as CFDictionary,
             imageBufferAttributes: nil,
             compressedDataAllocator: nil,
@@ -74,6 +119,23 @@ final class VideoEncoder {
             compressionSessionOut: &compressionSession
         )
 
+        if (status != noErr || compressionSession == nil), codec == .hevc {
+            logger.error("HEVC compression session create failed (\(status)) — falling back to H.264")
+            codec = .h264
+            status = VTCompressionSessionCreate(
+                allocator: kCFAllocatorDefault,
+                width: width,
+                height: height,
+                codecType: kCMVideoCodecType_H264,
+                encoderSpecification: encoderSpec as CFDictionary,
+                imageBufferAttributes: nil,
+                compressedDataAllocator: nil,
+                outputCallback: compressionOutputCallback,
+                refcon: Unmanaged.passUnretained(self).toOpaque(),
+                compressionSessionOut: &compressionSession
+            )
+        }
+
         guard status == noErr, let session = compressionSession else {
             throw VideoEncoderError.sessionCreationFailed(status)
         }
@@ -81,7 +143,11 @@ final class VideoEncoder {
         // Configure session properties
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_RealTime, value: kCFBooleanTrue)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ProfileLevel, value: kVTProfileLevel_H264_High_AutoLevel)
+        VTSessionSetProperty(
+            session,
+            key: kVTCompressionPropertyKey_ProfileLevel,
+            value: codec == .hevc ? kVTProfileLevel_HEVC_Main_AutoLevel : kVTProfileLevel_H264_High_AutoLevel
+        )
 
         // Bitrate
         VTSessionSetProperty(
@@ -109,7 +175,7 @@ final class VideoEncoder {
 
         VTCompressionSessionPrepareToEncodeFrames(session)
         self.session = session
-        logger.info("VideoEncoder started \(self.width)x\(self.height) @ \(Int(self.frameRate))fps, \(self.bitrateBps / 1_000_000)Mbps")
+        logger.info("VideoEncoder started \(self.codec.wireName) \(self.width)x\(self.height) @ \(Int(self.frameRate))fps, \(self.bitrateBps / 1_000_000)Mbps")
     }
 
     /// Tear down current session and create a new one with the given preset.
@@ -131,6 +197,27 @@ final class VideoEncoder {
                 logger.info("VideoEncoder reconfigured → \(preset.width)x\(preset.height) @\(Int(preset.fps))fps")
             } catch {
                 logger.error("VideoEncoder reconfigure FAILED at \(preset.width)x\(preset.height): \(error)")
+            }
+        }
+    }
+
+    /// Tear down and restart the session on a new codec, keeping the current dimensions and
+    /// bitrate. Used when the negotiated codec changes mid-stream (e.g. an H.264-only client
+    /// joins and forces the shared encoder down from HEVC). Resets parameter sets so fresh
+    /// VPS/SPS/PPS + an IDR are emitted for the new codec on the next frame.
+    func reconfigure(codec newCodec: BeamVideoCodec) {
+        encoderQueue.async { [weak self] in
+            guard let self else { return }
+            guard newCodec != codec || session == nil else { return }
+            if let s = session { VTCompressionSessionInvalidate(s); session = nil }
+            parameterSetsSent = false
+            forceKeyframeFlag = false
+            codec = newCodec
+            do {
+                try startInternal()
+                logger.info("VideoEncoder codec → \(self.codec.wireName)")
+            } catch {
+                logger.error("VideoEncoder codec reconfigure FAILED (\(newCodec.wireName)): \(error)")
             }
         }
     }
@@ -208,11 +295,13 @@ final class VideoEncoder {
             isKeyframe = true  // No attachment = no B-frames = keyframe
         }
 
-        // Extract parameter sets (SPS/PPS) from keyframes if not yet sent
+        // Extract parameter sets from keyframes if not yet sent. H.264 carries SPS+PPS; HEVC
+        // carries VPS+SPS+PPS. The blob is Annex B (start-code prefixed) and codec is reported
+        // so the receiver knows which format-description builder to use.
         if isKeyframe && !parameterSetsSent {
-            if let (sps, pps) = extractParameterSets(from: sampleBuffer) {
+            if let paramData = extractParameterSets(from: sampleBuffer) {
                 parameterSetsSent = true
-                delegate?.videoEncoder(self, didEncodeParameterSets: sps, ppsData: pps)
+                delegate?.videoEncoder(self, didEncodeParameterSets: paramData, codec: codec)
             }
         }
 
@@ -225,27 +314,37 @@ final class VideoEncoder {
 
     // MARK: - Format Helpers
 
-    private func extractParameterSets(from sampleBuffer: CMSampleBuffer) -> (sps: Data, pps: Data)? {
+    /// Extract the codec's parameter sets from a keyframe as a single Annex B blob:
+    /// H.264 → SPS+PPS (2 NALs), HEVC → VPS+SPS+PPS (3 NALs), each start-code prefixed.
+    private func extractParameterSets(from sampleBuffer: CMSampleBuffer) -> Data? {
         guard let format = CMSampleBufferGetFormatDescription(sampleBuffer) else { return nil }
-
-        var spsCount = 0, spsSize = 0
-        var spsPointer: UnsafePointer<UInt8>?
-        CMVideoFormatDescriptionGetH264ParameterSetAtIndex(format, parameterSetIndex: 0, parameterSetPointerOut: &spsPointer, parameterSetSizeOut: &spsSize, parameterSetCountOut: &spsCount, nalUnitHeaderLengthOut: nil)
-
-        var ppsCount = 0, ppsSize = 0
-        var ppsPointer: UnsafePointer<UInt8>?
-        CMVideoFormatDescriptionGetH264ParameterSetAtIndex(format, parameterSetIndex: 1, parameterSetPointerOut: &ppsPointer, parameterSetSizeOut: &ppsSize, parameterSetCountOut: &ppsCount, nalUnitHeaderLengthOut: nil)
-
-        guard let sps = spsPointer, let pps = ppsPointer else { return nil }
-
-        // Wrap in Annex B start codes
         let startCode: [UInt8] = [0x00, 0x00, 0x00, 0x01]
-        var spsData = Data(startCode)
-        spsData.append(UnsafeBufferPointer(start: sps, count: spsSize))
-        var ppsData = Data(startCode)
-        ppsData.append(UnsafeBufferPointer(start: pps, count: ppsSize))
 
-        return (spsData, ppsData)
+        // Read the parameter-set count from index 0, then pull every set. HEVC and H.264 use
+        // different accessors; the count-out tells us how many sets to emit for each.
+        var count = 0
+        if codec == .hevc {
+            CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(format, parameterSetIndex: 0, parameterSetPointerOut: nil, parameterSetSizeOut: nil, parameterSetCountOut: &count, nalUnitHeaderLengthOut: nil)
+        } else {
+            CMVideoFormatDescriptionGetH264ParameterSetAtIndex(format, parameterSetIndex: 0, parameterSetPointerOut: nil, parameterSetSizeOut: nil, parameterSetCountOut: &count, nalUnitHeaderLengthOut: nil)
+        }
+        guard count >= 2 else { return nil }
+
+        var blob = Data()
+        for index in 0..<count {
+            var size = 0
+            var pointer: UnsafePointer<UInt8>?
+            let status: OSStatus
+            if codec == .hevc {
+                status = CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(format, parameterSetIndex: index, parameterSetPointerOut: &pointer, parameterSetSizeOut: &size, parameterSetCountOut: nil, nalUnitHeaderLengthOut: nil)
+            } else {
+                status = CMVideoFormatDescriptionGetH264ParameterSetAtIndex(format, parameterSetIndex: index, parameterSetPointerOut: &pointer, parameterSetSizeOut: &size, parameterSetCountOut: nil, nalUnitHeaderLengthOut: nil)
+            }
+            guard status == noErr, let pointer else { return nil }
+            blob.append(contentsOf: startCode)
+            blob.append(UnsafeBufferPointer(start: pointer, count: size))
+        }
+        return blob.isEmpty ? nil : blob
     }
 
     /// Convert VideoToolbox AVCC output to Annex B format (start code prefix before each NAL).
