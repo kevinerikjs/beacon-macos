@@ -222,6 +222,7 @@ final class StreamServer {
 
         // Tell iOS what quality is currently active
         session.sendQualityChanged(qualityManager.activePreset)
+        session.sendCaptureMode(currentCaptureMode())
         if let audioFormat = currentAudioFormat {
             session.sendAudioFormatChanged(sampleRate: audioFormat.sampleRate, channels: audioFormat.channels)
         }
@@ -485,6 +486,7 @@ final class StreamServer {
                     await MainActor.run {
                         self.appState?.isWindowMode = false
                     }
+                    broadcastCaptureMode()
                 }
             }
 
@@ -546,6 +548,57 @@ final class StreamServer {
     }
 
     // MARK: - Window Streaming
+
+    /// What the host is capturing right now, as the clients should see it (BEAM-35).
+    private func currentCaptureMode() -> BeamCaptureModePayload {
+        guard let window = pendingWindowSelection else {
+            return BeamCaptureModePayload(windowMode: false, windowID: nil, title: nil, app: nil)
+        }
+        return BeamCaptureModePayload(
+            windowMode: true,
+            windowID: window.windowID,
+            title: window.title ?? "",
+            app: window.owningApplication?.applicationName ?? ""
+        )
+    }
+
+    /// Every connected phone learns about a capture-mode change, whichever end made it.
+    func broadcastCaptureMode() {
+        let mode = currentCaptureMode()
+        let sessions = sessionsQueue.sync { Array(activeSessions.values) }
+        sessions.forEach { $0.sendCaptureMode(mode) }
+    }
+
+    /// A phone asked for the window list (BEAM-35). Same enumeration and size filter the Mac's
+    /// own picker uses, so both ends offer the same choices.
+    func handleWindowListRequest(from session: StreamSession) {
+        Task {
+            let windows = await ScreenCapture.availableWindows()
+            let infos = windows.map {
+                BeamWindowInfo(id: $0.windowID, title: $0.title ?? "", app: $0.owningApplication?.applicationName ?? "")
+            }
+            session.sendWindowList(infos)
+        }
+    }
+
+    /// A phone picked a window, or 0 to go back to the full display (BEAM-35). Routed through
+    /// AppState so the menu bar and the Mac-side picker reflect it exactly as a local pick would.
+    func handleWindowSelectRequest(windowID: UInt32) {
+        Task { @MainActor in
+            guard let appState else { return }
+            if windowID == 0 {
+                await appState.beamFullDisplay()
+                return
+            }
+            let windows = await ScreenCapture.availableWindows()
+            guard let window = windows.first(where: { $0.windowID == windowID }) else {
+                logger.warning("Client asked for window \(windowID) which is no longer available")
+                broadcastCaptureMode()   // resync the phone with reality
+                return
+            }
+            await appState.beamWindow(window)
+        }
+    }
 
     func switchToWindowMode(window: SCWindow) async {
         pendingWindowSelection = window

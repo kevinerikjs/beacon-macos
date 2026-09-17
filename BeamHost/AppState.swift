@@ -160,6 +160,7 @@ final class AppState {
         guard let server = streamServer else { return }
         await server.switchToWindowMode(window: window)
         isWindowMode = true
+        server.broadcastCaptureMode()
     }
 
     @MainActor
@@ -167,6 +168,7 @@ final class AppState {
         guard let server = streamServer else { return }
         await server.switchToDisplayMode()
         isWindowMode = false
+        server.broadcastCaptureMode()
     }
 
     /// Global hotkey action (BEAM-2): in window mode → back to full display;

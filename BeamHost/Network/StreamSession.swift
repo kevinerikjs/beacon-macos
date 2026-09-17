@@ -302,7 +302,8 @@ final class StreamSession {
             supportsVideoHold: true,
             selectedAudioCodec: negotiatedAudioCodec.wireName,
             selectedVideoCodec: negotiatedVideoCodec.wireName,
-            supportsAudioToggle: true
+            supportsAudioToggle: true,
+            supportsWindowSelection: true
         ))
 
         server?.sessionAuthenticated(self, deviceName: device.name)
@@ -383,6 +384,12 @@ final class StreamSession {
             if case .viewportLock(let payload) = message.payload {
                 server?.handleViewportLockRequest(payload)
             }
+        case .windowListRequest:
+            server?.handleWindowListRequest(from: self)
+        case .windowSelectRequest:
+            if case .windowSelect(let payload) = message.payload {
+                server?.handleWindowSelectRequest(windowID: payload.windowID)
+            }
         case .audioEnableRequest:
             if case .audioEnable(let payload) = message.payload, payload.enabled != wantsAudio {
                 wantsAudio = payload.enabled
@@ -401,6 +408,25 @@ final class StreamSession {
             type: .qualityChanged,
             payload: .qualityChanged(BeamQualityPayload(preset: preset))
         )
+        guard let data = try? JSONEncoder().encode(msg) else { return }
+        let header = BeamPacketHeader(type: .control, flags: 0, payloadLength: UInt32(data.count))
+        var packet = header.serialized()
+        packet.append(data)
+        sendTCP(packet.lengthPrefixed())
+    }
+
+    /// Reply to a window_list_request (BEAM-35). Authenticated sessions only — the guard in
+    /// handleControlMessage already enforces that, and this is only ever called from there.
+    func sendWindowList(_ windows: [BeamWindowInfo]) {
+        sendControl(BeamControlMessage(type: .windowList, payload: .windowList(BeamWindowListPayload(windows: windows))))
+    }
+
+    func sendCaptureMode(_ mode: BeamCaptureModePayload) {
+        guard isAuthenticated else { return }
+        sendControl(BeamControlMessage(type: .captureModeChanged, payload: .captureMode(mode)))
+    }
+
+    private func sendControl(_ msg: BeamControlMessage) {
         guard let data = try? JSONEncoder().encode(msg) else { return }
         let header = BeamPacketHeader(type: .control, flags: 0, payloadLength: UInt32(data.count))
         var packet = header.serialized()
