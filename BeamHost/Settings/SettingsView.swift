@@ -464,27 +464,11 @@ private struct PhoneControlSettingsRow: View {
     private var actionDetail: some View {
         switch button.action {
         case .key(let keyCode, let modifiers):
-            PhoneShortcutRecorderView(keyCode: keyCode, modifiers: modifiers) { keyCode, modifiers in
+            PhoneShortcutRecorderView(keyCode: keyCode, modifiers: modifiers, quickKeys: Self.quickKeys) { keyCode, modifiers in
                 store.updateButton(layoutID: layout.id, buttonID: button.id) {
                     $0.action = .key(keyCode: keyCode, modifiers: modifiers)
                 }
             }
-            .frame(minWidth: 72, maxWidth: .infinity)
-            Menu {
-                ForEach(Self.quickKeys, id: \.title) { key in
-                    Button(key.title) {
-                        store.updateButton(layoutID: layout.id, buttonID: button.id) {
-                            $0.action = .key(keyCode: key.keyCode, modifiers: key.modifiers)
-                        }
-                    }
-                }
-            } label: {
-                Text("Common")
-            }
-            .menuStyle(.button)
-            .controlSize(.small)
-            .fixedSize()
-            .help("Pick a common key")
         case .mediaKey(let kind):
             Picker("Media key", selection: Binding(
                 get: { kind },
@@ -613,12 +597,6 @@ private struct PhoneControlSettingsRow: View {
         )
     }
 
-    private struct QuickKey {
-        let title: String
-        let keyCode: UInt32
-        let modifiers: UInt32
-    }
-
     private static let quickKeys = [
         QuickKey(title: "Left", keyCode: UInt32(kVK_LeftArrow), modifiers: 0),
         QuickKey(title: "Right", keyCode: UInt32(kVK_RightArrow), modifiers: 0),
@@ -692,25 +670,51 @@ private struct PhoneSymbolPickerView: View {
     }
 }
 
+struct QuickKey {
+    let title: String
+    let keyCode: UInt32
+    let modifiers: UInt32
+}
+
+/// One control for a key action: a menu showing the current key, with common keys and a
+/// "Record key…" item; while recording it turns into an orange button until a key is pressed.
 private struct PhoneShortcutRecorderView: View {
     let keyCode: UInt32
     let modifiers: UInt32
+    let quickKeys: [QuickKey]
     let onChange: (UInt32, UInt32) -> Void
 
     @State private var isRecording = false
     @State private var monitor: Any?
 
     var body: some View {
-        Button {
-            isRecording ? stopRecording() : startRecording()
-        } label: {
-            Text(isRecording ? "Press a key…" : phoneControlDisplayString(keyCode: keyCode, modifiers: modifiers))
-                .font(.callout.monospaced())
-                .frame(minWidth: 110)
+        Group {
+            if isRecording {
+                Button { stopRecording() } label: {
+                    Text("Press a key…")
+                        .font(.callout.monospaced())
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .tint(.orange)
+            } else {
+                Menu {
+                    Button("Record key…") { startRecording() }
+                    Divider()
+                    ForEach(quickKeys, id: \.title) { key in
+                        Button(key.title) { onChange(key.keyCode, key.modifiers) }
+                    }
+                } label: {
+                    Text(phoneControlDisplayString(keyCode: keyCode, modifiers: modifiers))
+                        .font(.callout.monospaced())
+                        .frame(maxWidth: .infinity)
+                }
+                .menuStyle(.button)
+                .frame(width: 136)
+            }
         }
-        .buttonStyle(.bordered)
-        .tint(isRecording ? .orange : nil)
-        .help("Record a key or shortcut")
+        .frame(width: 136)
+        .help("Pick a common key or record any key or shortcut")
         .onDisappear { stopRecording() }
     }
 
