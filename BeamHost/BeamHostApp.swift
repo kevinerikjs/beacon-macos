@@ -90,6 +90,9 @@ struct BeaconApp: App {
 /// - Both active: both dots shown
 struct MenuBarIconLabel: View {
     @Environment(AppState.self) private var appState
+    #if DEBUG
+    @Environment(\.openSettings) private var openSettings
+    #endif
 
     /// Brand streaming color #7163FF
     private let beamViolet = Color(red: 113 / 255, green: 99 / 255, blue: 255 / 255)
@@ -101,6 +104,17 @@ struct MenuBarIconLabel: View {
                 .resizable()
                 .scaledToFit()
                 .frame(width: 16, height: 16)
+                #if DEBUG
+                // Screenshot/automation only: `-beacon.debug.openSettings YES` opens Settings on
+                // launch. This label is the one view a menu-bar app always renders. Not in Release.
+                .task {
+                    guard UserDefaults.standard.bool(forKey: "beacon.debug.openSettings") else { return }
+                    try? await Task.sleep(for: .seconds(0.5))
+                    NSApp.setActivationPolicy(.regular)
+                    NSApp.activate(ignoringOtherApps: true)
+                    openSettings()
+                }
+                #endif
                 .foregroundStyle(appState.isStreaming ? beamViolet : .secondary)
 
             VStack(spacing: 2) {
