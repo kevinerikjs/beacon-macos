@@ -39,17 +39,39 @@ enum MediaKeyDispatcher {
 
         if let controlID = payload.controlID,
            let action = PhoneControlsStore.shared.action(forControlID: controlID) {
-            perform(action, text: payload.text)
+            perform(action, payload: payload)
         } else {
             performLegacy(payload.key)
         }
     }
 
-    private static func perform(_ action: PhoneControlAction, text: String?) {
+    /// Maps phone taps to screen points (BEAM-40). Set by StreamServer at start.
+    static var screenPointForTap: ((CGPoint) -> CGPoint?)?
+
+    private static func perform(_ action: PhoneControlAction, payload: BeamMediaKeyPayload) {
         switch action {
         case .textInput(_, let sendReturn):
-            guard let text, !text.isEmpty else { return }
+            guard let text = payload.text, !text.isEmpty else { return }
             typeText(text, sendReturn: sendReturn)
+        case .liveKeyboard:
+            guard let key = payload.keystroke, !key.isEmpty else { return }
+            typeKeystroke(key, modifiers: payload.keystrokeModifiers ?? 0)
+        case .modifier:
+            // Armed on the phone; arrives here folded into a later keystroke.
+            break
+        case .click(let fixed):
+            guard let click = payload.click else { return }
+            guard let point = screenPointForTap?(CGPoint(x: click.x, y: click.y)) else {
+                logger.warning("Phone click dropped: nothing is being captured")
+                return
+            }
+            let right: Bool
+            switch fixed {
+            case .left: right = false
+            case .right: right = true
+            case .choose: right = click.button == "right"
+            }
+            postClick(at: point, right: right)
         case .key(let keyCode, let modifiers):
             postKeyPress(keyCode: keyCode, modifiers: modifiers)
         case .mediaKey(let kind):
@@ -153,6 +175,78 @@ enum MediaKeyDispatcher {
             postKeyboardEvent(keyCode: keyCode, modifiers: modifiers, isDown: true)
         case .keyUp(let keyCode, let modifiers, _):
             postKeyboardEvent(keyCode: keyCode, modifiers: modifiers, isDown: false)
+        }
+    }
+
+    /// One key from the phone keyboard in live mode. Backspace and Return go as their real
+    /// keys so terminals and editors treat them as such; everything else as Unicode.
+    private static func typeKeystroke(_ key: String, modifiers: UInt32) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            switch key {
+            case "\u{8}", "\u{7f}":
+                postKeyPress(keyCode: UInt32(kVK_Delete), modifiers: modifiers)
+            case "\n", "\r":
+                postKeyPress(keyCode: UInt32(kVK_Return), modifiers: modifiers)
+            case "\t":
+                postKeyPress(keyCode: UInt32(kVK_Tab), modifiers: modifiers)
+            case _ where modifiers != 0:
+                // A chord needs a real key code (⌘C is not "⌘ + the letter C as text").
+                // Shift is folded into the character the phone already sent when the
+                // character has a key; unknown characters fall back to plain typing.
+                if let keyCode = ansiKeyCode(for: key) {
+                    postKeyPress(keyCode: keyCode, modifiers: modifiers)
+                } else {
+                    logger.warning("No key code for \"\(key)\"; typing it without modifiers")
+                    typeKeystroke(key, modifiers: 0)
+                }
+            default:
+                guard let source = CGEventSource(stateID: .hidSystemState) else { return }
+                var units = Array(key.utf16)
+                for isDown in [true, false] {
+                    let event = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: isDown)
+                    event?.keyboardSetUnicodeString(stringLength: units.count, unicodeString: &units)
+                    event?.post(tap: .cghidEventTap)
+                }
+            }
+        }
+    }
+
+    /// ANSI key code for a typed character, for chords. Letters are case-insensitive.
+    private static func ansiKeyCode(for key: String) -> UInt32? {
+        let table: [Character: Int] = [
+            "a": kVK_ANSI_A, "b": kVK_ANSI_B, "c": kVK_ANSI_C, "d": kVK_ANSI_D, "e": kVK_ANSI_E,
+            "f": kVK_ANSI_F, "g": kVK_ANSI_G, "h": kVK_ANSI_H, "i": kVK_ANSI_I, "j": kVK_ANSI_J,
+            "k": kVK_ANSI_K, "l": kVK_ANSI_L, "m": kVK_ANSI_M, "n": kVK_ANSI_N, "o": kVK_ANSI_O,
+            "p": kVK_ANSI_P, "q": kVK_ANSI_Q, "r": kVK_ANSI_R, "s": kVK_ANSI_S, "t": kVK_ANSI_T,
+            "u": kVK_ANSI_U, "v": kVK_ANSI_V, "w": kVK_ANSI_W, "x": kVK_ANSI_X, "y": kVK_ANSI_Y,
+            "z": kVK_ANSI_Z, "0": kVK_ANSI_0, "1": kVK_ANSI_1, "2": kVK_ANSI_2, "3": kVK_ANSI_3,
+            "4": kVK_ANSI_4, "5": kVK_ANSI_5, "6": kVK_ANSI_6, "7": kVK_ANSI_7, "8": kVK_ANSI_8,
+            "9": kVK_ANSI_9, " ": kVK_Space, "-": kVK_ANSI_Minus, "=": kVK_ANSI_Equal,
+            "[": kVK_ANSI_LeftBracket, "]": kVK_ANSI_RightBracket, ";": kVK_ANSI_Semicolon,
+            "'": kVK_ANSI_Quote, ",": kVK_ANSI_Comma, ".": kVK_ANSI_Period, "/": kVK_ANSI_Slash,
+            "\\": kVK_ANSI_Backslash, "`": kVK_ANSI_Grave,
+        ]
+        guard key.count == 1, let ch = key.lowercased().first, let code = table[ch] else { return nil }
+        return UInt32(code)
+    }
+
+    /// Mouse click at a global screen point (BEAM-40): move, press, release. Mouse events need
+    /// only Accessibility, unlike a virtual HID device.
+    private static func postClick(at point: CGPoint, right: Bool) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            guard let source = CGEventSource(stateID: .hidSystemState) else { return }
+            let button: CGMouseButton = right ? .right : .left
+            let down: CGEventType = right ? .rightMouseDown : .leftMouseDown
+            let up: CGEventType = right ? .rightMouseUp : .leftMouseUp
+            CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: button)?
+                .post(tap: .cghidEventTap)
+            Thread.sleep(forTimeInterval: 0.02)
+            CGEvent(mouseEventSource: source, mouseType: down, mouseCursorPosition: point, mouseButton: button)?
+                .post(tap: .cghidEventTap)
+            Thread.sleep(forTimeInterval: 0.03)
+            CGEvent(mouseEventSource: source, mouseType: up, mouseCursorPosition: point, mouseButton: button)?
+                .post(tap: .cghidEventTap)
+            logger.info("Phone click at (\(Int(point.x)), \(Int(point.y))) \(right ? "right" : "left")")
         }
     }
 

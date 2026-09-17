@@ -121,6 +121,10 @@ final class StreamServer {
         videoEncoder.delegate = self
         audioEncoder.delegate = self
         screenCapture.delegate = self
+        // Phone clicks are mapped against whatever this capture is showing right now (BEAM-40).
+        MediaKeyDispatcher.screenPointForTap = { [weak self] point in
+            self?.screenCapture.screenPoint(forFrameNormalized: point)
+        }
 
         qualityManager.onPresetChanged = { [weak self] preset in
             self?.applyQualityPreset(preset)

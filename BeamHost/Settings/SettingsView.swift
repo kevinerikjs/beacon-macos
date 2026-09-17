@@ -216,7 +216,7 @@ struct ControlsSettingsTab: View {
             VStack(alignment: .leading, spacing: 16) {
                 Text("Phone controls")
                     .font(.title3.weight(.semibold))
-                Text("Build up to seven buttons for your iPhone, then choose the active layout.")
+                Text("Build up to eight buttons for your iPhone, then choose the active layout.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
 
@@ -245,7 +245,7 @@ struct ControlsSettingsTab: View {
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
-                .disabled(layout.isBuiltIn || layout.buttons.count >= 7)
+                .disabled(layout.isBuiltIn || layout.buttons.count >= 8)
 
                 macroLibrary
 
@@ -314,7 +314,9 @@ struct ControlsSettingsTab: View {
                 }
                 .labelsHidden()
                 .pickerStyle(.menu)
-                .frame(width: 185)
+                // Size to the popup itself: a fixed frame centred a narrower popup inside it,
+                // which read as a stray gap before the row's right edge.
+                .fixedSize()
             }
             Divider().padding(.leading, 12)
             // Four equal-width buttons filling the row, like a segmented toolbar.
@@ -394,6 +396,11 @@ private struct PhoneControlSettingsRow: View {
 
     @State private var showingIconPicker = false
     @State private var showingTextInputInfo = false
+    @State private var showingLiveKeyboardInfo = false
+    @State private var showingClickInfo = false
+
+    private static let liveKeyboardInfo = "Tap this button on the phone and its keyboard comes up. Each key you press is typed on the Mac at once, into the app that has keyboard focus. Tap the button again, or close the keyboard, to stop."
+    private static let clickInfo = "Tap this button on the phone to turn click mode on. While it is on, each tap on the stream sends a mouse click to the same point on the Mac. With Left or right, the phone shows a switch for which button. Tap the button again to turn it off."
 
     private static let textInputInfo = "Tap this button on the phone and Beam asks you for text. Beacon types that text into the app that has keyboard focus on the Mac, then presses Return."
 
@@ -513,6 +520,64 @@ private struct PhoneControlSettingsRow: View {
                     .padding(12)
             }
             Spacer(minLength: 0)
+        case .liveKeyboard:
+            Button { showingLiveKeyboardInfo.toggle() } label: {
+                Image(systemName: "info.circle")
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.borderless)
+            .help(Self.liveKeyboardInfo)
+            .popover(isPresented: $showingLiveKeyboardInfo, arrowEdge: .bottom) {
+                Text(Self.liveKeyboardInfo)
+                    .font(.callout)
+                    .frame(width: 260, alignment: .leading)
+                    .padding(12)
+            }
+            Spacer(minLength: 0)
+        case .click(let clickButton):
+            Picker("Mouse button", selection: Binding(
+                get: { clickButton },
+                set: { newValue in
+                    store.updateButton(layoutID: layout.id, buttonID: button.id) {
+                        $0.action = .click(button: newValue)
+                    }
+                }
+            )) {
+                ForEach(PhoneControlAction.ClickButton.allCases) { option in
+                    Text(option.title).tag(option)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .frame(maxWidth: .infinity)
+            Button { showingClickInfo.toggle() } label: {
+                Image(systemName: "info.circle")
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.borderless)
+            .help(Self.clickInfo)
+            .popover(isPresented: $showingClickInfo, arrowEdge: .bottom) {
+                Text(Self.clickInfo)
+                    .font(.callout)
+                    .frame(width: 260, alignment: .leading)
+                    .padding(12)
+            }
+        case .modifier(let key):
+            Picker("Modifier", selection: Binding(
+                get: { key },
+                set: { newValue in
+                    store.updateButton(layoutID: layout.id, buttonID: button.id) {
+                        $0.action = .modifier(newValue)
+                    }
+                }
+            )) {
+                ForEach(PhoneControlAction.ModifierKey.allCases) { option in
+                    Text(option.title).tag(option)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .frame(maxWidth: .infinity)
         case .none:
             Spacer(minLength: 0)
             Text("No action")

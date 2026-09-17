@@ -252,6 +252,43 @@ final class ScreenCapture: NSObject {
         requestedAudioSampleRate = rate
     }
 
+    /// Map a phone tap (normalised to the frame the phone is showing) to a point on the Mac
+    /// screen, in the global top-left-origin coordinates CGEvent uses (BEAM-40). Undoes, in
+    /// order: the letterbox of the current frame, the viewport lock, and the position of the
+    /// captured window or display. nil when nothing is being captured.
+    func screenPoint(forFrameNormalized point: CGPoint) -> CGPoint? {
+        let sourceFrame: CGRect
+        if let currentWindow {
+            sourceFrame = currentWindow.frame
+        } else if let display = currentDisplay {
+            sourceFrame = display.frame
+        } else {
+            return nil
+        }
+        guard sourceFrame.width > 0, sourceFrame.height > 0 else { return nil }
+
+        // The region of the source the frame shows: the lock, or the whole source.
+        let shown = sourceLockedViewport ?? CGRect(x: 0, y: 0, width: 1, height: 1)
+        // Inside the frame, the shown region is letterboxed if its aspect differs from the
+        // frame's (only on a full display; window and lock frames match their source).
+        let shownPixels = CGSize(width: shown.width * sourceFrame.width, height: shown.height * sourceFrame.height)
+        let frameSize = CGSize(width: currentWidth, height: currentHeight)
+        // The rect mapper rejects empty rects, so map a hairline rect and keep its origin.
+        let mapped = sourceNormalizedViewport(
+            fromFrameNormalizedRect: CGRect(origin: point, size: CGSize(width: 0.001, height: 0.001)),
+            sourceSize: shownPixels,
+            frameSize: frameSize
+        )
+        guard !mapped.isNull else {
+            logger.warning("Phone click outside the shown region")
+            return nil
+        }
+        let inShown = CGPoint(x: mapped.origin.x.clamped(to: 0...1), y: mapped.origin.y.clamped(to: 0...1))
+        let inSource = CGPoint(x: shown.minX + inShown.x * shown.width, y: shown.minY + inShown.y * shown.height)
+        return CGPoint(x: sourceFrame.minX + inSource.x * sourceFrame.width,
+                       y: sourceFrame.minY + inSource.y * sourceFrame.height)
+    }
+
     /// Convert a phone-side lock (normalised to the frame the phone is currently showing) into
     /// source-normalised space, compensating for any letterbox in the current frame. nil when
     /// there is no source yet or the rect is degenerate.

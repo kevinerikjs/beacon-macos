@@ -33,13 +33,57 @@ enum PhoneControlAction: Codable, Equatable {
     /// The phone asks its user for text first, then the host types it as key presses (and
     /// Return when `sendReturn`). `prompt` is the input box title shown on the phone.
     case textInput(prompt: String, sendReturn: Bool)
+    /// Toggle on the phone: its keyboard comes up and every key is typed here as pressed.
+    case liveKeyboard
+    /// Toggle on the phone: taps on the stream become mouse clicks at the same spot here.
+    /// `.choose` shows a left/right switch on the phone; the others are fixed.
+    case click(button: ClickButton)
+    /// Sticky modifier on the phone: armed until the next live keystroke, which is then sent
+    /// as a chord (⌘C, ⌃C...). Several can be armed at once.
+    case modifier(ModifierKey)
     case none
+
+    enum ModifierKey: String, Codable, CaseIterable, Identifiable {
+        case cmd, ctrl, alt, shift
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .cmd: return "Command"
+            case .ctrl: return "Control"
+            case .alt: return "Option"
+            case .shift: return "Shift"
+            }
+        }
+        var symbol: String {
+            switch self {
+            case .cmd: return "command"
+            case .ctrl: return "control"
+            case .alt: return "option"
+            case .shift: return "shift"
+            }
+        }
+    }
+
+    enum ClickButton: String, Codable, CaseIterable, Identifiable {
+        case choose, left, right
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .choose: return "Left or right"
+            case .left: return "Left click"
+            case .right: return "Right click"
+            }
+        }
+    }
 
     enum Kind: String, CaseIterable, Identifiable, Codable {
         case key
         case mediaKey
         case macro
         case textInput
+        case liveKeyboard
+        case click
+        case modifier
         case none
 
         var id: String { rawValue }
@@ -50,6 +94,9 @@ enum PhoneControlAction: Codable, Equatable {
             case .mediaKey: return "Media key"
             case .macro: return "Macro"
             case .textInput: return "Ask for text"
+            case .liveKeyboard: return "Live keyboard"
+            case .click: return "Click"
+            case .modifier: return "Modifier key"
             case .none: return "Nothing"
             }
         }
@@ -61,7 +108,26 @@ enum PhoneControlAction: Codable, Equatable {
         case .mediaKey: return .mediaKey
         case .macro: return .macro
         case .textInput: return .textInput
+        case .liveKeyboard: return .liveKeyboard
+        case .click: return .click
+        case .modifier: return .modifier
         case .none: return .none
+        }
+    }
+
+    /// What the phone is told about the button (BeamPhoneControl.mode).
+    var wireMode: String {
+        switch self {
+        case .textInput: return "text"
+        case .liveKeyboard: return "keyboard"
+        case .click(let button):
+            switch button {
+            case .choose: return "click"
+            case .left: return "click_left"
+            case .right: return "click_right"
+            }
+        case .modifier: return "modifier"
+        default: return "tap"
         }
     }
 
@@ -72,11 +138,14 @@ enum PhoneControlAction: Codable, Equatable {
         case .mediaKey: return .mediaKey(.playPause)
         case .macro: return .macro(id: PhoneControlsStore.shared.macros.first?.id ?? UUID())
         case .textInput: return .textInput(prompt: "", sendReturn: true)
+        case .liveKeyboard: return .liveKeyboard
+        case .click: return .click(button: .choose)
+        case .modifier: return .modifier(.cmd)
         case .none: return .none
         }
     }
 
-    private enum CodingKeys: String, CodingKey { case type, keyCode, modifiers, mediaKey, macroID, prompt, sendReturn }
+    private enum CodingKeys: String, CodingKey { case type, keyCode, modifiers, mediaKey, macroID, prompt, sendReturn, clickButton, modifierKey }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -95,6 +164,12 @@ enum PhoneControlAction: Codable, Equatable {
                 prompt: try container.decodeIfPresent(String.self, forKey: .prompt) ?? "",
                 sendReturn: try container.decodeIfPresent(Bool.self, forKey: .sendReturn) ?? true
             )
+        case .liveKeyboard:
+            self = .liveKeyboard
+        case .click:
+            self = .click(button: try container.decodeIfPresent(ClickButton.self, forKey: .clickButton) ?? .choose)
+        case .modifier:
+            self = .modifier(try container.decodeIfPresent(ModifierKey.self, forKey: .modifierKey) ?? .cmd)
         case .none:
             self = .none
         }
@@ -114,7 +189,11 @@ enum PhoneControlAction: Codable, Equatable {
         case .textInput(let prompt, let sendReturn):
             try container.encode(prompt, forKey: .prompt)
             try container.encode(sendReturn, forKey: .sendReturn)
-        case .none:
+        case .click(let button):
+            try container.encode(button, forKey: .clickButton)
+        case .modifier(let key):
+            try container.encode(key, forKey: .modifierKey)
+        case .liveKeyboard, .none:
             break
         }
     }
@@ -196,23 +275,24 @@ final class PhoneControlsStore {
 
     private init() {
         if let saved = Self.load() {
-            var loadedLayouts = saved.layouts.isEmpty ? [Self.defaultLayout] : saved.layouts
-            // The built-in layout was persisted before the keyboard button existed: append it
-            // once so upgraded installs get the same default as fresh ones.
-            if let index = loadedLayouts.firstIndex(where: { $0.isBuiltIn }),
-               loadedLayouts[index].buttons.count < 7,
-               !loadedLayouts[index].buttons.contains(where: { $0.action.kind == .textInput }) {
-                loadedLayouts[index].buttons.append(
-                    PhoneControlButton(id: UUID(), symbol: "keyboard", label: "Keyboard Input", prominent: false,
-                                       action: .textInput(prompt: "", sendReturn: true))
-                )
+            var loadedLayouts = saved.layouts.isEmpty ? Self.builtInLayouts : saved.layouts
+            // Built-in layouts are persisted, so upgrades re-sync them here: the Default bar's
+            // last button became Live keyboard, and Computer Use is new. Custom layouts stay.
+            if let index = loadedLayouts.firstIndex(where: { $0.isBuiltIn && $0.name == "Default" }) {
+                loadedLayouts[index].buttons = Self.defaultLayout.buttons
+            }
+            if let index = loadedLayouts.firstIndex(where: { $0.isBuiltIn && $0.name == "Computer Use" }) {
+                loadedLayouts[index].buttons = Self.computerUseLayout.buttons
+            } else {
+                let insertAt = (loadedLayouts.firstIndex(where: { $0.isBuiltIn }) ?? -1) + 1
+                loadedLayouts.insert(Self.computerUseLayout, at: min(insertAt, loadedLayouts.count))
             }
             layouts = loadedLayouts
             activeLayoutID = loadedLayouts.contains(where: { $0.id == saved.activeLayoutID })
                 ? saved.activeLayoutID : loadedLayouts[0].id
             macros = saved.macros
         } else {
-            layouts = [Self.defaultLayout]
+            layouts = Self.builtInLayouts
             activeLayoutID = Self.defaultLayout.id
             macros = []
             persist()
@@ -244,6 +324,8 @@ final class PhoneControlsStore {
                 control.promptsForText = true
                 control.textPrompt = prompt.isEmpty ? nil : prompt
             }
+            control.mode = button.action.wireMode
+            if case .modifier(let key) = button.action { control.modifier = key.rawValue }
             return control
         }
     }
@@ -314,7 +396,7 @@ final class PhoneControlsStore {
 
     func addButton(to layoutID: UUID) {
         guard let index = layouts.firstIndex(where: { $0.id == layoutID }),
-              layouts[index].buttons.count < 7 else { return }
+              layouts[index].buttons.count < 8 else { return }
         layouts[index].buttons.append(Self.makeBlankButton())
         persist()
     }
@@ -395,6 +477,8 @@ final class PhoneControlsStore {
     private static let defaultLayout = PhoneControlLayout(
         id: UUID(), name: "Default", isBuiltIn: true,
         buttons: [
+            PhoneControlButton(id: UUID(), symbol: "cursorarrow.click", label: "Left Click", prominent: false,
+                               action: .click(button: .left)),
             PhoneControlButton(id: UUID(), symbol: "arrow.counterclockwise", label: "Seek Back", prominent: false,
                                action: .key(keyCode: UInt32(kVK_LeftArrow), modifiers: 0)),
             PhoneControlButton(id: UUID(), symbol: "backward.fill", label: "Previous", prominent: false,
@@ -405,8 +489,34 @@ final class PhoneControlsStore {
                                action: .mediaKey(.next)),
             PhoneControlButton(id: UUID(), symbol: "arrow.clockwise", label: "Seek Forward", prominent: false,
                                action: .key(keyCode: UInt32(kVK_RightArrow), modifiers: 0)),
-            PhoneControlButton(id: UUID(), symbol: "keyboard", label: "Keyboard Input", prominent: false,
-                               action: .textInput(prompt: "", sendReturn: true))
+            PhoneControlButton(id: UUID(), symbol: "keyboard", label: "Keyboard", prominent: false,
+                               action: .liveKeyboard),
+            PhoneControlButton(id: UUID(), symbol: "cursorarrow.click.2", label: "Right Click", prominent: false,
+                               action: .click(button: .right))
         ]
     )
+
+    /// For driving the Mac: the media keys give way to sticky modifiers, so ⌘C, ⌃C and
+    /// ⌥-anything can be typed from the phone keyboard.
+    private static let computerUseLayout = PhoneControlLayout(
+        id: UUID(), name: "Computer Use", isBuiltIn: true,
+        buttons: [
+            PhoneControlButton(id: UUID(), symbol: "cursorarrow.click", label: "Left Click", prominent: false,
+                               action: .click(button: .left)),
+            PhoneControlButton(id: UUID(), symbol: "command", label: "Command", prominent: false,
+                               action: .modifier(.cmd)),
+            PhoneControlButton(id: UUID(), symbol: "control", label: "Control", prominent: false,
+                               action: .modifier(.ctrl)),
+            PhoneControlButton(id: UUID(), symbol: "option", label: "Option", prominent: false,
+                               action: .modifier(.alt)),
+            PhoneControlButton(id: UUID(), symbol: "shift", label: "Shift", prominent: false,
+                               action: .modifier(.shift)),
+            PhoneControlButton(id: UUID(), symbol: "keyboard", label: "Keyboard", prominent: true,
+                               action: .liveKeyboard),
+            PhoneControlButton(id: UUID(), symbol: "cursorarrow.click.2", label: "Right Click", prominent: false,
+                               action: .click(button: .right))
+        ]
+    )
+
+    private static var builtInLayouts: [PhoneControlLayout] { [defaultLayout, computerUseLayout] }
 }
