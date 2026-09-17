@@ -1396,8 +1396,9 @@ private struct DefaultWindowPicker: View {
         }
         .labelsHidden()
         .pickerStyle(.menu)
-        .fixedSize()
-        .frame(maxWidth: 260, alignment: .trailing)
+        // Fixed width: the popup truncates a long selection itself instead of pushing the
+        // row label off the edge. Trailing-aligned so a short selection still sits flush.
+        .frame(width: 240, alignment: .trailing)
         .task { windows = await ScreenCapture.availableWindows() }
     }
 }
