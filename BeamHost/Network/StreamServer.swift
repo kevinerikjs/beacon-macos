@@ -569,14 +569,22 @@ final class StreamServer {
         sessions.forEach { $0.sendCaptureMode(mode) }
     }
 
-    /// A phone asked for the window list (BEAM-35). Same enumeration and size filter the Mac's
-    /// own picker uses, so both ends offer the same choices.
+    /// A phone asked for the window list (BEAM-35). Same enumeration as the Mac's own picker,
+    /// but tighter: the phone has no thumbnails to tell a real window from Notification Center
+    /// chrome, so only layer-0 app windows with a title are offered, grouped by app.
     func handleWindowListRequest(from session: StreamSession) {
         Task {
             let windows = await ScreenCapture.availableWindows()
-            let infos = windows.map {
-                BeamWindowInfo(id: $0.windowID, title: $0.title ?? "", app: $0.owningApplication?.applicationName ?? "")
+            let ownBundle = Bundle.main.bundleIdentifier
+            let infos = windows.compactMap { window -> BeamWindowInfo? in
+                guard window.windowLayer == 0,
+                      let app = window.owningApplication,
+                      app.bundleIdentifier != ownBundle,
+                      let title = window.title, !title.isEmpty
+                else { return nil }
+                return BeamWindowInfo(id: window.windowID, title: title, app: app.applicationName)
             }
+            .sorted { ($0.app.lowercased(), $0.title.lowercased()) < ($1.app.lowercased(), $1.title.lowercased()) }
             session.sendWindowList(infos)
         }
     }
