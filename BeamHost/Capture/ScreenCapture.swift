@@ -47,13 +47,24 @@ final class ScreenCapture: NSObject {
     /// long edge caps the frame's long edge; the other side follows the source aspect. Both are
     /// rounded to multiples of 16 for the encoder. Full display keeps the preset size verbatim
     /// so nothing changes for the common case.
-    func frameSize(for window: SCWindow?, preset: StreamQualityPreset? = nil) -> CGSize {
+    func frameSize(for window: SCWindow?, preset: StreamQualityPreset? = nil, lock: CGRect? = nil) -> CGSize {
         let pw = preset?.width ?? presetWidth
         let ph = preset?.height ?? presetHeight
-        guard let window, window.frame.width > 0, window.frame.height > 0 else {
+        let source: CGSize
+        if let window, window.frame.width > 0, window.frame.height > 0 {
+            source = window.frame.size
+        } else if let lock, let display = currentDisplay, display.width > 0, display.height > 0 {
+            source = CGSize(width: display.width, height: display.height)
+        } else {
             return CGSize(width: pw, height: ph)
         }
-        let aspect = window.frame.width / window.frame.height
+        // A locked region is the source now: the frame takes its pixel aspect.
+        let aspect: CGFloat
+        if let lock, lock.width > 0, lock.height > 0 {
+            aspect = (lock.width * source.width) / (lock.height * source.height)
+        } else {
+            aspect = source.width / source.height
+        }
         let longEdge = CGFloat(max(pw, ph))
         var w: CGFloat, h: CGFloat
         if aspect >= 1 {
@@ -70,7 +81,11 @@ final class ScreenCapture: NSObject {
         currentHeight = Int(size.height)
     }
     private var currentFrameRate: Double = 30
-    private var normalizedLockedViewport: CGRect? = nil
+    /// Viewport lock in source-normalised space (0...1 of the window or display). Converted
+    /// from the phone's frame-normalised rect once, at lock time, against the frame the phone
+    /// was looking at; after that the frame itself takes the lock's aspect (BEAM-38), so the
+    /// locked region streams edge to edge instead of being forced back into the window's shape.
+    private(set) var sourceLockedViewport: CGRect? = nil
 
     // MARK: - Permission
 
@@ -120,14 +135,10 @@ final class ScreenCapture: NSObject {
         currentWindow = initialWindow
         applyFrameSize(frameSize(for: initialWindow))
         if let initialLockedViewport {
-            normalizedLockedViewport = CGRect(
-                x: initialLockedViewport.origin.x.clamped(to: 0...1),
-                y: initialLockedViewport.origin.y.clamped(to: 0...1),
-                width: initialLockedViewport.width.clamped(to: 0.1...1),
-                height: initialLockedViewport.height.clamped(to: 0.1...1)
-            )
+            sourceLockedViewport = sourceRect(forFrameNormalized: initialLockedViewport)
+            applyFrameSize(frameSize(for: initialWindow, lock: sourceLockedViewport))
         } else {
-            normalizedLockedViewport = nil
+            sourceLockedViewport = nil
         }
 
         let filter: SCContentFilter
@@ -178,7 +189,7 @@ final class ScreenCapture: NSObject {
         self.stream = nil
         self.currentWindow = nil
         self.currentDisplay = nil
-        self.normalizedLockedViewport = nil
+        self.sourceLockedViewport = nil
         logger.info("Screen capture stopped")
     }
 
@@ -199,7 +210,7 @@ final class ScreenCapture: NSObject {
         presetWidth = preset.width
         presetHeight = preset.height
         currentFrameRate = preset.fps
-        applyFrameSize(frameSize(for: currentWindow))
+        applyFrameSize(frameSize(for: currentWindow, lock: sourceLockedViewport))
         try await stream.updateConfiguration(makeConfiguration(captureAudio: true))
         logger.info("ScreenCapture updated → \(self.currentWidth)x\(self.currentHeight) @\(Int(preset.fps))fps")
     }
@@ -241,22 +252,42 @@ final class ScreenCapture: NSObject {
         requestedAudioSampleRate = rate
     }
 
-    /// Crop full-display capture to a normalized viewport rect (0...1 space).
-    /// Pass nil to return to uncropped full-display capture.
-    func setLockedViewport(_ normalizedRect: CGRect?) async throws {
-        guard let stream else { return }
-        if let normalizedRect {
-            normalizedLockedViewport = CGRect(
-                x: normalizedRect.origin.x.clamped(to: 0...1),
-                y: normalizedRect.origin.y.clamped(to: 0...1),
-                width: normalizedRect.width.clamped(to: 0.1...1),
-                height: normalizedRect.height.clamped(to: 0.1...1)
-            )
+    /// Convert a phone-side lock (normalised to the frame the phone is currently showing) into
+    /// source-normalised space, compensating for any letterbox in the current frame. nil when
+    /// there is no source yet or the rect is degenerate.
+    func sourceRect(forFrameNormalized rect: CGRect) -> CGRect? {
+        let clamped = CGRect(
+            x: rect.origin.x.clamped(to: 0...1),
+            y: rect.origin.y.clamped(to: 0...1),
+            width: rect.width.clamped(to: 0.05...1),
+            height: rect.height.clamped(to: 0.05...1)
+        )
+        let sourceSize: CGSize
+        if let currentWindow {
+            sourceSize = currentWindow.frame.size
+        } else if let display = currentDisplay {
+            sourceSize = CGSize(width: display.width, height: display.height)
         } else {
-            normalizedLockedViewport = nil
+            return nil
         }
+        let mapped = sourceNormalizedViewport(
+            fromFrameNormalizedRect: clamped,
+            sourceSize: sourceSize,
+            frameSize: CGSize(width: currentWidth, height: currentHeight)
+        )
+        return mapped.isNull ? nil : mapped
+    }
+
+    /// Crop capture to a source-normalised viewport rect (from `sourceRect(forFrameNormalized:)`)
+    /// and resize the frame to that region's aspect. Pass nil to return to the uncropped source.
+    /// The caller reconfigures the encoder to `frameSize(for:lock:)` BEFORE this so the SPS
+    /// describes the frames that follow.
+    func setLockedViewport(source: CGRect?) async throws {
+        guard let stream else { return }
+        sourceLockedViewport = source
+        applyFrameSize(frameSize(for: currentWindow, lock: source))
         try await stream.updateConfiguration(makeConfiguration(captureAudio: true))
-        logger.info("ScreenCapture viewport lock updated: \(normalizedRect != nil)")
+        logger.info("ScreenCapture viewport lock updated: \(source != nil) → \(self.currentWidth)x\(self.currentHeight)")
     }
 
     private func makeConfiguration(captureAudio: Bool) -> SCStreamConfiguration {
@@ -277,7 +308,7 @@ final class ScreenCapture: NSObject {
         config.sampleRate = Int(requestedAudioSampleRate)
         config.channelCount = 2
 
-        if let normalizedLockedViewport {
+        if let sourceNormalizedRect = sourceLockedViewport {
             let sourceSize: CGSize
             if let currentWindow {
                 sourceSize = CGSize(width: currentWindow.frame.width, height: currentWindow.frame.height)
@@ -289,13 +320,6 @@ final class ScreenCapture: NSObject {
             let sourceWidth = sourceSize.width
             let sourceHeight = sourceSize.height
             guard sourceWidth > 0, sourceHeight > 0 else { return config }
-            let frameSize = CGSize(width: CGFloat(currentWidth), height: CGFloat(currentHeight))
-            let sourceNormalizedRect = sourceNormalizedViewport(
-                fromFrameNormalizedRect: normalizedLockedViewport,
-                sourceSize: sourceSize,
-                frameSize: frameSize
-            )
-            guard !sourceNormalizedRect.isNull else { return config }
 
             let requestedRect = CGRect(
                 x: (sourceNormalizedRect.origin.x * sourceWidth).clamped(to: 0...sourceWidth),

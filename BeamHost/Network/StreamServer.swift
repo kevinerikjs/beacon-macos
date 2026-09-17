@@ -365,15 +365,17 @@ final class StreamServer {
             return
         }
 
-        Task {
-            if payload.locked {
-                let rect = CGRect(x: payload.x, y: payload.y, width: payload.width, height: payload.height)
-                try? await screenCapture.setLockedViewport(rect)
-            } else {
-                try? await screenCapture.setLockedViewport(nil)
-            }
-            videoEncoder.requestKeyframe()
-        }
+        Task { await applyViewportLock(pendingLockedViewportRect) }
+    }
+
+    /// Convert the phone's frame-normalised lock to source space against the frame it was
+    /// drawn on, size the encoder to the locked region's aspect, then crop (BEAM-38). Order
+    /// matters: the encoder must expect the new dimensions before the first cropped frame.
+    private func applyViewportLock(_ frameRect: CGRect?) async {
+        let source = frameRect.flatMap { screenCapture.sourceRect(forFrameNormalized: $0) }
+        videoEncoder.reconfigure(frameSize: screenCapture.frameSize(for: pendingWindowSelection, lock: source))
+        try? await screenCapture.setLockedViewport(source: source)
+        videoEncoder.requestKeyframe()
     }
 
     func broadcastQualityChanged(_ preset: StreamQualityPreset) {
@@ -390,7 +392,7 @@ final class StreamServer {
 
     private func applyQualityPreset(_ preset: StreamQualityPreset) {
         // Keep the window's aspect across quality changes (BEAM-38).
-        videoEncoder.reconfigure(preset: preset, frameSize: screenCapture.frameSize(for: pendingWindowSelection, preset: preset))
+        videoEncoder.reconfigure(preset: preset, frameSize: screenCapture.frameSize(for: pendingWindowSelection, preset: preset, lock: screenCapture.sourceLockedViewport))
         // The preset is the only signal the host has for "constrained link", and the auto
         // tiering drives it down on exactly those links. Bitrate is settable live, so this
         // neither tears down the converter nor re-anchors the PTS clock.
@@ -625,7 +627,7 @@ final class StreamServer {
             try await screenCapture.startWindowMode(window: targetWindow)
             pendingWindowSelection = targetWindow
             if let pendingLockedViewportRect {
-                try? await screenCapture.setLockedViewport(pendingLockedViewportRect)
+                await applyViewportLock(pendingLockedViewportRect)
             }
             videoEncoder.requestKeyframe()
             logger.info("Switched to window mode: \(targetWindow.title ?? "unknown")")
@@ -641,11 +643,7 @@ final class StreamServer {
         do {
             videoEncoder.reconfigure(frameSize: screenCapture.frameSize(for: nil))
             try await screenCapture.stopWindowMode(display: display)
-            if let pendingLockedViewportRect {
-                try? await screenCapture.setLockedViewport(pendingLockedViewportRect)
-            } else {
-                try? await screenCapture.setLockedViewport(nil)
-            }
+            await applyViewportLock(pendingLockedViewportRect)
             videoEncoder.requestKeyframe()
             logger.info("Returned to full display mode")
         } catch {
