@@ -252,7 +252,12 @@ struct ControlsSettingsTab: View {
                 Spacer(minLength: 0)
             }
             .padding(.vertical, 4)
+            // SettingsView pads the whole tab by 20; the scroll view pulls itself back out to the
+            // window edge so the scroll bar sits where every other macOS window puts it, and the
+            // content re-applies the 20 inside.
+            .padding(.horizontal, 20)
         }
+        .padding(.horizontal, -20)
         .scrollIndicators(.automatic)
         .sheet(isPresented: $showingRenameLayout) {
             LayoutNameSheet(title: "Rename Layout", initialName: store.activeLayout.name) { name in
@@ -452,7 +457,6 @@ private struct PhoneControlSettingsRow: View {
                 .frame(width: 138)
 
                 actionDetail
-                Spacer(minLength: 0)
             }
         }
         .padding(.horizontal, 12)
@@ -489,14 +493,16 @@ private struct PhoneControlSettingsRow: View {
             }
             .labelsHidden()
             .pickerStyle(.menu)
-            .frame(width: 130)
+            .frame(maxWidth: .infinity)
         case .macro(let macroID):
             macroPicker(macroID: macroID)
         case .textInput:
+            Spacer(minLength: 0)
             Image(systemName: "info.circle")
                 .foregroundStyle(.secondary)
                 .help("Tap this button on the phone and Beam asks you for text. Beacon types that text into the app that has keyboard focus on the Mac, then presses Return.")
         case .none:
+            Spacer(minLength: 0)
             Text("No action")
                 .font(.callout)
                 .foregroundStyle(.secondary)
@@ -540,7 +546,7 @@ private struct PhoneControlSettingsRow: View {
         }
         .labelsHidden()
         .pickerStyle(.menu)
-        .frame(width: 130)
+        .frame(maxWidth: .infinity)
     }
 
     private var labelBinding: Binding<String> {
@@ -713,7 +719,7 @@ private struct PhoneShortcutRecorderView: View {
                 .pickerStyle(.menu)
             }
         }
-        .frame(width: 130)
+        .frame(maxWidth: .infinity)
         .help("Pick a common key or record any key or shortcut")
         .onDisappear { stopRecording() }
     }
