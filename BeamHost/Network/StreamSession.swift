@@ -33,6 +33,9 @@ final class StreamSession {
     /// advertised it, else H.264. The shared encoder aggregates this across all sessions
     /// (see StreamServer.desiredVideoCodec), so it is a capability, not a guarantee.
     private(set) var negotiatedVideoCodec: BeamVideoCodec = .h264
+    /// Whether this client wants audio at all (BEAM-34). Set from `wantsAudio` at auth and
+    /// flipped by `audio_enable_request` mid-session. Per-connection, like the codecs.
+    private(set) var wantsAudio = true
 
     private var sharedSecret: SymmetricKey?
     private(set) var authenticatedDeviceID: String?
@@ -281,6 +284,9 @@ final class StreamSession {
         let advertisedVideo = message.supportedVideoCodecs ?? []
         negotiatedVideoCodec = advertisedVideo.contains(BeamVideoCodec.hevc.wireName) ? .hevc : .h264
 
+        // Absence means an older client, which always wants audio.
+        wantsAudio = message.wantsAudio ?? true
+
         // Success
         isAuthenticated = true
         sharedSecret = SymmetricKey(data: device.sharedSecret)
@@ -295,11 +301,12 @@ final class StreamSession {
             supportsRemoteAccess: true,
             supportsVideoHold: true,
             selectedAudioCodec: negotiatedAudioCodec.wireName,
-            selectedVideoCodec: negotiatedVideoCodec.wireName
+            selectedVideoCodec: negotiatedVideoCodec.wireName,
+            supportsAudioToggle: true
         ))
 
         server?.sessionAuthenticated(self, deviceName: device.name)
-        logger.info("Session authenticated for device '\(device.name)' — audio \(self.negotiatedAudioCodec.wireName), video \(self.negotiatedVideoCodec.wireName)")
+        logger.info("Session authenticated for device '\(device.name)' — audio \(self.wantsAudio ? self.negotiatedAudioCodec.wireName : "off"), video \(self.negotiatedVideoCodec.wireName)")
     }
 
     private func handleHello(_ message: BeamPairingMessage) {
@@ -375,6 +382,12 @@ final class StreamSession {
         case .viewportLockRequest:
             if case .viewportLock(let payload) = message.payload {
                 server?.handleViewportLockRequest(payload)
+            }
+        case .audioEnableRequest:
+            if case .audioEnable(let payload) = message.payload, payload.enabled != wantsAudio {
+                wantsAudio = payload.enabled
+                logger.info("Audio \(payload.enabled ? "enabled" : "disabled") by client")
+                server?.sessionAudioPreferenceChanged(self)
             }
         default:
             break
@@ -510,7 +523,7 @@ final class StreamSession {
         // Belt and braces: StreamServer already fans each representation out only to the
         // sessions that negotiated it, but a fan-out bug must never be able to put AAC bytes
         // on a legacy wire — that is white noise into someone's headphones, not a glitch.
-        guard isAuthenticated, codec == negotiatedAudioCodec else { return }
+        guard isAuthenticated, wantsAudio, codec == negotiatedAudioCodec else { return }
 
         // Audio must be able to shed load too, or it starves video off the link entirely.
         // Its ceiling is deliberately higher than video's: dropped audio splices rather than

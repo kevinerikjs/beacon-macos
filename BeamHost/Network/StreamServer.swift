@@ -46,10 +46,28 @@ final class StreamServer {
     /// unless at least one authenticated session negotiated it, so it is gated on the live
     /// session set and re-evaluated on every connect/disconnect.
     private func refreshAACOutputEnabled() {
-        let needed = sessionsQueue.sync {
-            activeSessions.values.contains { $0.negotiatedAudioCodec == .aacLC }
+        let (aacNeeded, anyAudio) = sessionsQueue.sync {
+            (activeSessions.values.contains { $0.wantsAudio && $0.negotiatedAudioCodec == .aacLC },
+             activeSessions.values.contains { $0.wantsAudio })
         }
-        audioEncoder.isAACOutputEnabled = needed
+        audioEncoder.isAACOutputEnabled = aacNeeded
+        anySessionWantsAudio = anyAudio
+    }
+
+    /// False when every connected client has audio switched off (BEAM-34). Captured audio
+    /// buffers are dropped before the encoder in that state, so neither PCM chunking nor AAC
+    /// runs. The SCStream keeps its audio output attached — re-adding one on a live stream is
+    /// not cheap and this flag can flip several times a session.
+    private var anySessionWantsAudio = true
+
+    /// A session flipped its audio preference mid-session (BEAM-34).
+    func sessionAudioPreferenceChanged(_ session: StreamSession) {
+        refreshAACOutputEnabled()
+        // A client turning audio back on needs the engine format again: it may have been told
+        // before it had an engine running, or it may be a fresh engine on its side.
+        if session.wantsAudio, let audioFormat = currentAudioFormat {
+            session.sendAudioFormatChanged(sampleRate: audioFormat.sampleRate, channels: audioFormat.channels)
+        }
     }
 
     /// The codec the single shared encoder should run. One capture feeds every session the same
@@ -614,6 +632,7 @@ extension StreamServer: ScreenCaptureDelegate {
     }
 
     func screenCapture(_ capture: ScreenCapture, didOutputAudioFrame frame: CMSampleBuffer) {
+        guard anySessionWantsAudio else { return }
         audioEncoder.encode(sampleBuffer: frame)
     }
 
@@ -666,14 +685,14 @@ extension StreamServer: VideoEncoderDelegate {
 extension StreamServer: AudioEncoderDelegate {
     func audioEncoder(_ encoder: AudioEncoder, didProducePCMChunk data: Data, presentationTime: CMTime) {
         let sessions = sessionsQueue.sync {
-            activeSessions.values.filter { $0.negotiatedAudioCodec == .pcmFloat32 }
+            activeSessions.values.filter { $0.wantsAudio && $0.negotiatedAudioCodec == .pcmFloat32 }
         }
         sessions.forEach { $0.send(audioData: data, codec: .pcmFloat32, pts: presentationTime) }
     }
 
     func audioEncoder(_ encoder: AudioEncoder, didProduceAACChunk data: Data, presentationTime: CMTime) {
         let sessions = sessionsQueue.sync {
-            activeSessions.values.filter { $0.negotiatedAudioCodec == .aacLC }
+            activeSessions.values.filter { $0.wantsAudio && $0.negotiatedAudioCodec == .aacLC }
         }
         sessions.forEach { $0.send(audioData: data, codec: .aacLC, pts: presentationTime) }
     }
