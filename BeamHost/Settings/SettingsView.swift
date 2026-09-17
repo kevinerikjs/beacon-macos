@@ -2,6 +2,7 @@
 // Preferences window for Beacon.
 
 import SwiftUI
+import Carbon.HIToolbox
 import ScreenCaptureKit
 import ServiceManagement
 import ApplicationServices
@@ -13,6 +14,10 @@ struct SettingsView: View {
         TabView {
             GeneralSettingsTab()
                 .tabItem { Label("General", systemImage: "gearshape") }
+                .environment(appState)
+
+            ControlsSettingsTab()
+                .tabItem { Label("Controls", systemImage: "gamecontroller") }
                 .environment(appState)
 
             DisplaySettingsTab()
@@ -30,7 +35,7 @@ struct SettingsView: View {
     /// One fixed size for every tab, sized to the tallest one.
     ///
     /// A TabView sizes itself to whichever tab is showing, so letting it size naturally makes the
-    /// window jump every time you switch tabs. Pinning all three to the tallest keeps the window
+    /// window jump every time you switch tabs. Pinning all four to the tallest keeps the window
     /// still, at the cost of some empty space under Display and Devices.
     ///
     /// General is the tallest and sets this number: app header, Behavior, Global Hotkey,
@@ -181,6 +186,489 @@ struct GeneralSettingsTab: View {
             NSWorkspace.shared.open(url)
         }
     }
+}
+
+// MARK: - Controls Tab
+
+struct ControlsSettingsTab: View {
+    @State private var store = PhoneControlsStore.shared
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Phone media buttons")
+                    .font(.title3.weight(.semibold))
+                Text("Choose what each button on your iPhone sends to Beacon.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+
+                ForEach(PhoneControlsStore.buttonIDs, id: \.self) { id in
+                    PhoneControlSettingsGroup(controlID: id, store: store)
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 4)
+        }
+        .scrollIndicators(.automatic)
+    }
+}
+
+private struct PhoneControlSettingsGroup: View {
+    @Environment(AppState.self) private var appState
+    @Bindable private var store: PhoneControlsStore
+
+    let controlID: String
+    @State private var showIconPicker = false
+    @State private var showMacroRecorder = false
+
+    init(controlID: String, store: PhoneControlsStore) {
+        self.controlID = controlID
+        _store = Bindable(wrappedValue: store)
+    }
+
+    private var controlTitle: String {
+        switch controlID {
+        case "seek_backward": return "Rewind"
+        case "seek_forward":  return "Fast Forward"
+        case "play_pause":    return "Play/Pause"
+        default:               return controlID
+        }
+    }
+
+    var body: some View {
+        let config = store.config(for: controlID)
+
+        settingsGroup(header: controlTitle) {
+            settingsRow("Icon") {
+                Button {
+                    showIconPicker = true
+                } label: {
+                    Image(systemName: config.symbol)
+                        .font(.system(size: 17, weight: .medium))
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(.bordered)
+                .help("Choose icon")
+            }
+
+            Divider().padding(.leading, 12)
+
+            settingsRow("Label") {
+                TextField("Label", text: labelBinding)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 170)
+            }
+
+            Divider().padding(.leading, 12)
+
+            settingsRow("Action") {
+                Picker("Action", selection: actionPresetBinding) {
+                    ForEach(PhoneControlAction.Preset.allCases) { preset in
+                        Text(preset.title).tag(preset)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .frame(width: 170)
+            }
+
+            switch config.action {
+            case .shortcut(let keyCode, let modifiers):
+                Divider().padding(.leading, 12)
+                settingsRow("Shortcut") {
+                    PhoneShortcutRecorderView(
+                        keyCode: keyCode,
+                        modifiers: modifiers,
+                        onChange: setShortcut
+                    )
+                }
+            case .macro(let steps):
+                Divider().padding(.leading, 12)
+                settingsRow("Macro") {
+                    macroControls(steps: steps)
+                }
+            default:
+                EmptyView()
+            }
+        }
+        .sheet(isPresented: $showIconPicker) {
+            PhoneSymbolPickerView(selectedSymbol: config.symbol) { symbol in
+                updateConfig { $0.symbol = symbol }
+            }
+        }
+        .sheet(isPresented: $showMacroRecorder) {
+            MacroRecorderSheet(initialSteps: macroSteps, onSave: setMacro)
+                .environment(appState)
+        }
+    }
+
+    private var labelBinding: Binding<String> {
+        Binding(
+            get: { store.config(for: controlID).label },
+            set: { value in updateConfig { $0.label = value } }
+        )
+    }
+
+    private var actionPresetBinding: Binding<PhoneControlAction.Preset> {
+        Binding(
+            get: { store.config(for: controlID).action.preset },
+            set: { preset in
+                updateConfig { config in
+                    config.action = config.action.replacingPreset(preset)
+                }
+            }
+        )
+    }
+
+    private var macroSteps: [MacroStep] {
+        if case .macro(let steps) = store.config(for: controlID).action {
+            return steps
+        }
+        return []
+    }
+
+    @ViewBuilder
+    private func macroControls(steps: [MacroStep]) -> some View {
+        VStack(alignment: .trailing, spacing: 6) {
+            HStack(spacing: 8) {
+                Text("\(steps.count) \(steps.count == 1 ? "step" : "steps")")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Clear") {
+                    setMacro([])
+                }
+                .buttonStyle(.borderless)
+                .disabled(steps.isEmpty)
+                Button("Record macro…") {
+                    showMacroRecorder = true
+                }
+                .buttonStyle(.bordered)
+            }
+
+            if !appState.hasAccessibilityPermission || !AXIsProcessTrusted() {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "info.circle")
+                        .foregroundStyle(.secondary)
+                    Text("Accessibility access is required to record macros.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("Grant Access…") {
+                        requestPhoneControlAccessibilityPermission()
+                    }
+                    .buttonStyle(.link)
+                }
+            }
+        }
+        .frame(minWidth: 255, alignment: .trailing)
+    }
+
+    private func setShortcut(keyCode: UInt32, modifiers: UInt32) {
+        updateConfig { $0.action = .shortcut(keyCode: keyCode, modifiers: modifiers) }
+    }
+
+    private func setMacro(_ steps: [MacroStep]) {
+        updateConfig { $0.action = .macro(steps) }
+    }
+
+    private func updateConfig(_ update: (inout PhoneControlConfig) -> Void) {
+        var config = store.config(for: controlID)
+        update(&config)
+        store.setConfig(config, for: controlID)
+    }
+}
+
+private struct PhoneSymbolPickerView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let selectedSymbol: String
+    let onSelect: (String) -> Void
+
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 10), count: 6)
+
+    private static let symbols = [
+        "gobackward", "goforward", "gobackward.10", "goforward.10", "gobackward.15",
+        "goforward.15", "gobackward.30", "goforward.30", "backward.fill", "forward.fill",
+        "backward.end.fill", "forward.end.fill", "playpause.fill", "play.fill", "pause.fill",
+        "stop.fill", "arrow.left", "arrow.right", "arrow.up", "arrow.down", "chevron.left",
+        "chevron.right", "arrow.uturn.left", "arrow.uturn.right", "arrow.clockwise",
+        "arrow.counterclockwise", "speaker.wave.2.fill", "speaker.slash.fill",
+        "plus.magnifyingglass", "minus.magnifyingglass", "rectangle.on.rectangle",
+        "square.grid.2x2", "list.bullet", "bookmark.fill", "star.fill", "heart.fill",
+        "hand.thumbsup.fill", "text.bubble.fill", "keyboard", "command", "option", "shift",
+        "escape", "return", "space", "tab", "magnifyingglass", "house.fill", "folder.fill",
+        "doc.fill", "camera.fill", "video.fill", "mic.fill", "display", "macwindow",
+        "sidebar.left", "sidebar.right", "arrow.left.arrow.right", "arrow.up.arrow.down",
+        "repeat", "shuffle", "bolt.fill", "timer", "ellipsis.circle.fill", "cursorarrow"
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Choose an icon")
+                .font(.headline)
+
+            ScrollView {
+                LazyVGrid(columns: columns, spacing: 10) {
+                    ForEach(Self.symbols, id: \.self) { symbol in
+                        Button {
+                            onSelect(symbol)
+                            dismiss()
+                        } label: {
+                            Image(systemName: symbol)
+                                .font(.system(size: 18, weight: .medium))
+                                .frame(width: 44, height: 40)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 7)
+                                        .fill(symbol == selectedSymbol ? Color.accentColor.opacity(0.2) : .clear)
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 7)
+                                        .stroke(symbol == selectedSymbol ? Color.accentColor : .clear, lineWidth: 1)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .help(symbol)
+                    }
+                }
+            }
+        }
+        .padding(20)
+        .frame(width: 410, height: 430)
+    }
+}
+
+private struct PhoneShortcutRecorderView: View {
+    let keyCode: UInt32
+    let modifiers: UInt32
+    let onChange: (UInt32, UInt32) -> Void
+
+    @State private var isRecording = false
+    @State private var monitor: Any?
+
+    var body: some View {
+        Button {
+            isRecording ? stopRecording() : startRecording()
+        } label: {
+            Text(isRecording ? "Press a key…" : phoneControlDisplayString(keyCode: keyCode, modifiers: modifiers))
+                .font(.callout.monospaced())
+                .frame(minWidth: 110)
+        }
+        .buttonStyle(.bordered)
+        .tint(isRecording ? .orange : nil)
+        .help("Record a key or shortcut")
+        .onDisappear { stopRecording() }
+    }
+
+    private func startRecording() {
+        isRecording = true
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            if event.keyCode == 53 {
+                stopRecording()
+                return nil
+            }
+
+            let modifiers = HotkeyManager.carbonModifiers(from: event.modifierFlags)
+            onChange(UInt32(event.keyCode), modifiers)
+            stopRecording()
+            return nil
+        }
+    }
+
+    private func stopRecording() {
+        isRecording = false
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+    }
+}
+
+private struct MacroRecorderSheet: View {
+    @Environment(AppState.self) private var appState
+    @Environment(\.dismiss) private var dismiss
+
+    let onSave: ([MacroStep]) -> Void
+
+    @State private var steps: [MacroStep]
+    @State private var isRecording = false
+    @State private var globalMonitor: Any?
+    @State private var localMonitor: Any?
+    @State private var idleTimer: Timer?
+    @State private var lastEventUptime: TimeInterval?
+
+    init(initialSteps: [MacroStep], onSave: @escaping ([MacroStep]) -> Void) {
+        self.onSave = onSave
+        _steps = State(initialValue: initialSteps)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Record macro")
+                .font(.headline)
+            Text("Press the keys you want to replay. Recording stops after 10 seconds without a key.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if !appState.hasAccessibilityPermission || !AXIsProcessTrusted() {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "info.circle")
+                        .foregroundStyle(.secondary)
+                    Text("Accessibility access is required to record macros.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("Grant Access…") {
+                        requestPhoneControlAccessibilityPermission()
+                    }
+                    .buttonStyle(.link)
+                }
+            }
+
+            HStack {
+                Label("\(steps.count) \(steps.count == 1 ? "step" : "steps")", systemImage: "list.number")
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Clear") {
+                    steps.removeAll()
+                }
+                .buttonStyle(.borderless)
+                .disabled(steps.isEmpty || isRecording)
+                Button(isRecording ? "Stop" : "Record macro…") {
+                    isRecording ? stopRecording() : startRecording()
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(isRecording ? .orange : nil)
+                .disabled(!isRecording && !AXIsProcessTrusted())
+            }
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 6) {
+                    if steps.isEmpty {
+                        Text("No keys recorded")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
+                            HStack(spacing: 8) {
+                                Text("\(index + 1)")
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 22, alignment: .trailing)
+                                Text(phoneControlDisplayString(keyCode: step.keyCode, modifiers: step.modifiers))
+                                    .font(.callout.monospaced())
+                                if index > 0 {
+                                    Text("after \(step.delayMs) ms")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                } else {
+                                    Text("starts immediately")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: 150)
+
+            HStack {
+                Spacer()
+                Button("Cancel") {
+                    dismiss()
+                }
+                Button("Done") {
+                    finish()
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 430, height: 390)
+        .onDisappear { stopRecording() }
+    }
+
+    private func startRecording() {
+        guard AXIsProcessTrusted() else {
+            requestPhoneControlAccessibilityPermission()
+            return
+        }
+
+        isRecording = true
+        lastEventUptime = nil
+        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { event in
+            record(event)
+        }
+        localMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            record(event)
+            return nil
+        }
+        armIdleTimer()
+    }
+
+    private func record(_ event: NSEvent) {
+        guard isRecording else { return }
+        if event.keyCode == 53 {
+            stopRecording()
+            return
+        }
+
+        let now = ProcessInfo.processInfo.systemUptime
+        let delayMs: UInt32
+        if let lastEventUptime {
+            let elapsed = max(0, min((now - lastEventUptime) * 1_000, Double(UInt32.max)))
+            delayMs = UInt32(elapsed.rounded())
+        } else {
+            delayMs = 0
+        }
+
+        steps.append(MacroStep(
+            keyCode: UInt32(event.keyCode),
+            modifiers: HotkeyManager.carbonModifiers(from: event.modifierFlags),
+            delayMs: delayMs
+        ))
+        lastEventUptime = now
+        armIdleTimer()
+    }
+
+    private func armIdleTimer() {
+        idleTimer?.invalidate()
+        idleTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: false) { _ in
+            stopRecording()
+        }
+    }
+
+    private func stopRecording() {
+        isRecording = false
+        if let globalMonitor { NSEvent.removeMonitor(globalMonitor) }
+        if let localMonitor { NSEvent.removeMonitor(localMonitor) }
+        globalMonitor = nil
+        localMonitor = nil
+        idleTimer?.invalidate()
+        idleTimer = nil
+        lastEventUptime = nil
+    }
+
+    private func finish() {
+        stopRecording()
+        onSave(steps)
+        dismiss()
+    }
+}
+
+private func phoneControlDisplayString(keyCode: UInt32, modifiers: UInt32) -> String {
+    var parts = ""
+    if modifiers & UInt32(controlKey) != 0 { parts += "⌃" }
+    if modifiers & UInt32(optionKey) != 0 { parts += "⌥" }
+    if modifiers & UInt32(shiftKey) != 0 { parts += "⇧" }
+    if modifiers & UInt32(cmdKey) != 0 { parts += "⌘" }
+    return parts + HotkeyManager.keyName(for: keyCode)
+}
+
+private func requestPhoneControlAccessibilityPermission() {
+    let options = [kAXTrustedCheckOptionPrompt.takeRetainedValue() as String: true] as CFDictionary
+    AXIsProcessTrustedWithOptions(options)
 }
 
 // MARK: - Display Tab

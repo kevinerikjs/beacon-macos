@@ -303,7 +303,8 @@ final class StreamSession {
             selectedAudioCodec: negotiatedAudioCodec.wireName,
             selectedVideoCodec: negotiatedVideoCodec.wireName,
             supportsAudioToggle: true,
-            supportsWindowSelection: true
+            supportsWindowSelection: true,
+            phoneControls: PhoneControlsStore.shared.wireControls()
         ))
 
         server?.sessionAuthenticated(self, deviceName: device.name)
