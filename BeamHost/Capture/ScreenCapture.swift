@@ -32,8 +32,43 @@ final class ScreenCapture: NSObject {
     // Track current window filter (nil = full display)
     private var currentWindow: SCWindow? = nil
     private var currentDisplay: SCDisplay?
+    /// Actual encoded frame size. Equals the preset's size on a full display; in window mode
+    /// it takes the window's aspect ratio (BEAM-38) so a tall window streams tall instead of
+    /// letterboxed inside a 16:9 frame.
     private var currentWidth: Int = 1920
     private var currentHeight: Int = 1080
+    /// The quality preset's nominal size: the pixel budget the frame is derived from.
+    private var presetWidth: Int = 1920
+    private var presetHeight: Int = 1080
+
+    var currentFrameSize: CGSize { CGSize(width: currentWidth, height: currentHeight) }
+
+    /// Frame size for a source aspect within the current preset's budget (BEAM-38). The preset's
+    /// long edge caps the frame's long edge; the other side follows the source aspect. Both are
+    /// rounded to multiples of 16 for the encoder. Full display keeps the preset size verbatim
+    /// so nothing changes for the common case.
+    func frameSize(for window: SCWindow?, preset: StreamQualityPreset? = nil) -> CGSize {
+        let pw = preset?.width ?? presetWidth
+        let ph = preset?.height ?? presetHeight
+        guard let window, window.frame.width > 0, window.frame.height > 0 else {
+            return CGSize(width: pw, height: ph)
+        }
+        let aspect = window.frame.width / window.frame.height
+        let longEdge = CGFloat(max(pw, ph))
+        var w: CGFloat, h: CGFloat
+        if aspect >= 1 {
+            w = longEdge; h = longEdge / aspect
+        } else {
+            h = longEdge; w = longEdge * aspect
+        }
+        func snap(_ v: CGFloat) -> Int { max(128, Int((v / 16).rounded()) * 16) }
+        return CGSize(width: snap(w), height: snap(h))
+    }
+
+    private func applyFrameSize(_ size: CGSize) {
+        currentWidth = Int(size.width)
+        currentHeight = Int(size.height)
+    }
     private var currentFrameRate: Double = 30
     private var normalizedLockedViewport: CGRect? = nil
 
@@ -79,10 +114,11 @@ final class ScreenCapture: NSObject {
 
         // Stream configuration
         currentDisplay = display
-        currentWidth = width
-        currentHeight = height
+        presetWidth = width
+        presetHeight = height
         currentFrameRate = frameRate
         currentWindow = initialWindow
+        applyFrameSize(frameSize(for: initialWindow))
         if let initialLockedViewport {
             normalizedLockedViewport = CGRect(
                 x: initialLockedViewport.origin.x.clamped(to: 0...1),
@@ -160,11 +196,12 @@ final class ScreenCapture: NSObject {
     /// Update stream resolution and frame rate without restarting the stream.
     func updateConfiguration(preset: StreamQualityPreset) async throws {
         guard let stream else { return }
-        currentWidth = preset.width
-        currentHeight = preset.height
+        presetWidth = preset.width
+        presetHeight = preset.height
         currentFrameRate = preset.fps
+        applyFrameSize(frameSize(for: currentWindow))
         try await stream.updateConfiguration(makeConfiguration(captureAudio: true))
-        logger.info("ScreenCapture updated → \(preset.width)x\(preset.height) @\(Int(preset.fps))fps")
+        logger.info("ScreenCapture updated → \(self.currentWidth)x\(self.currentHeight) @\(Int(preset.fps))fps")
     }
 
     /// Switch to capturing a specific window. Call after start().
@@ -173,9 +210,10 @@ final class ScreenCapture: NSObject {
         let filter = SCContentFilter(desktopIndependentWindow: window)
         try await stream.updateContentFilter(filter)
         currentWindow = window
+        applyFrameSize(frameSize(for: window))
         // Apply destinationRect centering for the new window
         try await stream.updateConfiguration(makeConfiguration(captureAudio: true))
-        logger.info("ScreenCapture switched to window: \(window.title ?? "unknown")")
+        logger.info("ScreenCapture switched to window: \(window.title ?? "unknown") → \(self.currentWidth)x\(self.currentHeight)")
     }
 
     /// Return to capturing the full display.
@@ -183,6 +221,7 @@ final class ScreenCapture: NSObject {
         guard let stream else { return }
         currentDisplay = display
         currentWindow = nil  // Clear before makeConfiguration so destinationRect is not applied
+        applyFrameSize(frameSize(for: nil))
         let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
         try await stream.updateContentFilter(filter)
         try await stream.updateConfiguration(makeConfiguration(captureAudio: true))
@@ -265,9 +304,10 @@ final class ScreenCapture: NSObject {
                 height: (sourceNormalizedRect.height * sourceHeight).clamped(to: 64...sourceHeight)
             ).intersection(CGRect(x: 0, y: 0, width: sourceWidth, height: sourceHeight))
 
-            let lockedRect = constrained16x9Rect(
+            let lockedRect = constrainedRect(
                 from: requestedRect,
-                within: CGRect(x: 0, y: 0, width: sourceWidth, height: sourceHeight)
+                within: CGRect(x: 0, y: 0, width: sourceWidth, height: sourceHeight),
+                aspect: CGFloat(currentWidth) / CGFloat(currentHeight)
             )
             if !lockedRect.isNull, lockedRect.width > 10, lockedRect.height > 10 {
                 config.sourceRect = lockedRect
@@ -343,10 +383,11 @@ final class ScreenCapture: NSObject {
         return normalized
     }
 
-    private func constrained16x9Rect(from rect: CGRect, within bounds: CGRect) -> CGRect {
-        guard !rect.isNull, rect.width > 0, rect.height > 0 else { return .null }
+    /// Fits `rect` to the encoded frame's aspect (16:9 on a full display; the window's aspect in
+    /// window mode, BEAM-38) so a lock never reintroduces letterboxing.
+    private func constrainedRect(from rect: CGRect, within bounds: CGRect, aspect targetAspect: CGFloat) -> CGRect {
+        guard !rect.isNull, rect.width > 0, rect.height > 0, targetAspect > 0 else { return .null }
 
-        let targetAspect: CGFloat = 16.0 / 9.0
         let rectAspect = rect.width / rect.height
         let center = CGPoint(x: rect.midX, y: rect.midY)
 
@@ -360,13 +401,13 @@ final class ScreenCapture: NSObject {
             height = width / targetAspect
         }
 
-        // Keep a minimum footprint while preserving 16:9.
+        // Keep a minimum footprint while preserving the aspect.
         if height < 64 {
             height = 64
             width = height * targetAspect
         }
 
-        // Clamp to bounds while preserving 16:9.
+        // Clamp to bounds while preserving the aspect.
         if width > bounds.width {
             width = bounds.width
             height = width / targetAspect

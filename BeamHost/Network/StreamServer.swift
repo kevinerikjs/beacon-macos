@@ -389,7 +389,8 @@ final class StreamServer {
     }
 
     private func applyQualityPreset(_ preset: StreamQualityPreset) {
-        videoEncoder.reconfigure(preset: preset)
+        // Keep the window's aspect across quality changes (BEAM-38).
+        videoEncoder.reconfigure(preset: preset, frameSize: screenCapture.frameSize(for: pendingWindowSelection, preset: preset))
         // The preset is the only signal the host has for "constrained link", and the auto
         // tiering drives it down on exactly those links. Bitrate is settable live, so this
         // neither tears down the converter nor re-anchors the PTS clock.
@@ -473,6 +474,7 @@ final class StreamServer {
             // Pick the codec for this capture from the sessions already authenticated: HEVC only
             // if the host can encode it and every connected client negotiated it, else H.264.
             videoEncoder.setInitialCodec(desiredVideoCodec())
+            videoEncoder.setInitialFrameSize(screenCapture.currentFrameSize)
             try videoEncoder.start()
             try audioEncoder.start()
 
@@ -617,6 +619,9 @@ final class StreamServer {
 
         let targetWindow = await resolveWindowSelection(from: window) ?? window
         do {
+            // Encoder first, capture second, same order as a quality change: the new SPS must
+            // describe the frames that follow it (BEAM-38).
+            videoEncoder.reconfigure(frameSize: screenCapture.frameSize(for: targetWindow))
             try await screenCapture.startWindowMode(window: targetWindow)
             pendingWindowSelection = targetWindow
             if let pendingLockedViewportRect {
@@ -634,6 +639,7 @@ final class StreamServer {
         guard captureStarted,
               let display = await MainActor.run(body: { appState?.selectedDisplay }) else { return }
         do {
+            videoEncoder.reconfigure(frameSize: screenCapture.frameSize(for: nil))
             try await screenCapture.stopWindowMode(display: display)
             if let pendingLockedViewportRect {
                 try? await screenCapture.setLockedViewport(pendingLockedViewportRect)

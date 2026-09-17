@@ -92,6 +92,17 @@ final class VideoEncoder {
         encoderQueue.sync { if session == nil { codec = newCodec } }
     }
 
+    /// Frame size the NEXT `start()` will use (BEAM-38): capture may begin straight into window
+    /// mode, whose frame follows the window's aspect rather than the preset's.
+    func setInitialFrameSize(_ size: CGSize) {
+        encoderQueue.sync {
+            if session == nil {
+                width = Int32(size.width)
+                height = Int32(size.height)
+            }
+        }
+    }
+
     private func startInternal() throws {
         guard session == nil else { return }
 
@@ -178,25 +189,29 @@ final class VideoEncoder {
         logger.info("VideoEncoder started \(self.codec.wireName) \(self.width)x\(self.height) @ \(Int(self.frameRate))fps, \(self.bitrateBps / 1_000_000)Mbps")
     }
 
-    /// Tear down current session and create a new one with the given preset.
+    /// Tear down current session and create a new one with the given preset. `frameSize`
+    /// overrides the preset's dimensions when the capture frame follows a window's aspect
+    /// (BEAM-38); fps and bitrate still come from the preset.
     /// Resets parameter sets — new SPS/PPS + IDR will be emitted on the next encoded frame.
-    func reconfigure(preset: StreamQualityPreset) {
+    func reconfigure(preset: StreamQualityPreset, frameSize: CGSize? = nil) {
         encoderQueue.async { [weak self] in
             guard let self else { return }
+            let newW = Int32(frameSize?.width ?? CGFloat(preset.width))
+            let newH = Int32(frameSize?.height ?? CGFloat(preset.height))
             if let s = session { VTCompressionSessionInvalidate(s); session = nil }
             parameterSetsSent = false
             forceKeyframeFlag = false
-            width = Int32(preset.width)
-            height = Int32(preset.height)
+            width = newW
+            height = newH
             frameRate = preset.fps
             bitrateBps = Int(preset.bitrateMbps * 1_000_000)
             // Never swallow this: a failed restart leaves the pipeline running with no encoder,
             // which reaches the user as a permanently black stream and nothing in the log.
             do {
                 try startInternal()
-                logger.info("VideoEncoder reconfigured → \(preset.width)x\(preset.height) @\(Int(preset.fps))fps")
+                logger.info("VideoEncoder reconfigured → \(newW)x\(newH) @\(Int(preset.fps))fps")
             } catch {
-                logger.error("VideoEncoder reconfigure FAILED at \(preset.width)x\(preset.height): \(error)")
+                logger.error("VideoEncoder reconfigure FAILED at \(newW)x\(newH): \(error)")
             }
         }
     }
@@ -229,6 +244,28 @@ final class VideoEncoder {
         parameterSetsSent = false
         forceKeyframeFlag = false
         logger.info("VideoEncoder stopped")
+    }
+
+    /// Restart the session at a new frame size, keeping fps, bitrate and codec (BEAM-38).
+    /// No-op when the size is unchanged, so switching between two windows of the same shape
+    /// costs nothing but the keyframe the caller requests.
+    func reconfigure(frameSize: CGSize) {
+        encoderQueue.async { [weak self] in
+            guard let self else { return }
+            let newW = Int32(frameSize.width), newH = Int32(frameSize.height)
+            guard newW != width || newH != height else { return }
+            if let s = session { VTCompressionSessionInvalidate(s); session = nil }
+            parameterSetsSent = false
+            forceKeyframeFlag = false
+            width = newW
+            height = newH
+            do {
+                try startInternal()
+                logger.info("VideoEncoder frame size → \(newW)x\(newH)")
+            } catch {
+                logger.error("VideoEncoder frame size reconfigure FAILED at \(newW)x\(newH): \(error)")
+            }
+        }
     }
 
     /// Request that the next encoded frame be a keyframe (IDR).
