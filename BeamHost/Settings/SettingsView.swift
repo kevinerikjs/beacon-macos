@@ -1289,7 +1289,7 @@ struct DisplaySettingsTab: View {
             }
 
             settingsGroup(header: "On Connect") {
-                settingsRow("Default target") {
+                settingsRow("Default Target") {
                     DefaultWindowPicker()
                 }
                 Text(appState.resumeLastCapture
@@ -1386,7 +1386,7 @@ private struct DefaultWindowPicker: View {
         let unique = Array(NSOrderedSet(array: choices)) as! [Choice]
 
         let current: Selection = appState.resumeLastCapture ? .noDefault : (stored.map { .window($0) } ?? .fullDisplay)
-        return Picker("Default target", selection: Binding<Selection>(
+        return Picker("Default Target", selection: Binding<Selection>(
             get: { current },
             set: { selection in
                 switch selection {
