@@ -3,15 +3,16 @@
 // Handles the pairing/authentication handshake over TCP, then sends video/audio data.
 //
 // The transport is PhorosNetwork.PhorosConnection. Authentication, send scheduling,
-// video hold and heartbeat policy come from PhorosSession. What stays here is Beacon
-// glue: KeyStore lookup, the force-PCM escape hatch, the preferred audio sample rate,
-// and forwarding to StreamServer.
+// video hold and heartbeat policy come from PhorosSession. Controller input is replayed
+// by PhorosInput.VirtualGamepad. What stays here is Beacon glue: KeyStore lookup, the
+// force-PCM escape hatch, the preferred audio sample rate, and forwarding to StreamServer.
 
 import CoreMedia
 import Foundation
 import Network
 import OSLog
 import Phoros
+import PhorosInput
 import PhorosNetwork
 import PhorosSession
 
@@ -59,6 +60,8 @@ final class StreamSession {
     private var scheduler = SendScheduler()
     private var hold = VideoHold()
     private var heartbeat = HeartbeatMonitor()
+    /// One virtual pad per session. Beacon streams to one client at a time.
+    private let gamepad = VirtualGamepad(productName: "Beam Controller", manufacturer: "Beam")
     private var heartbeatTimer: DispatchSourceTimer?
     private var lastDropLogAt = Date.distantPast
 
@@ -77,6 +80,16 @@ final class StreamSession {
             logger.info("Session TCP connection ready from \(String(describing: self.link.connection.endpoint))")
         }
         link.onFrame = { [weak self] frame in self?.handleFrame(frame) }
+        gamepad.onEvent = { [id] event in
+            switch event {
+            case .created: logger.info("Session \(id) virtual gamepad created")
+            case .released: logger.info("Session \(id) virtual gamepad removed")
+            case .creationFailed:
+                logger.error("Session \(id) failed to create the virtual gamepad: the com.apple.developer.hid.virtual.device entitlement is missing from this build. Controller input will be dropped.")
+            case .reportRejected(let status):
+                logger.warning("Session \(id) HID report rejected: \(String(format: "0x%08X", status))")
+            }
+        }
         link.onEnd = { [weak self] reason in
             guard let self else { return }
             switch reason {
@@ -95,6 +108,7 @@ final class StreamSession {
         isTerminated = true
         heartbeatTimer?.cancel()
         heartbeatTimer = nil
+        gamepad.release()
         link.cancel()
         logger.info("Session \(self.id) disconnected")
     }
@@ -105,11 +119,10 @@ final class StreamSession {
         heartbeat.heard()
         switch frame {
         case .packet(let packet) where packet.type == .input:
-            // Controller input is recognised and dropped rather than ignored. Beacon cannot
-            // replay it into a virtual gamepad without the approval-gated
-            // com.apple.developer.hid.virtual.device entitlement. Dropping it here matters:
-            // falling through to the JSON path floods the log at 60 Hz.
-            return
+            // Binary, routed by packet type before any JSON decode: at 60 Hz a fall-through
+            // to the JSON path would flood the log. Ignored until the client authenticates.
+            guard isAuthenticated, let report = ControllerReport.parse(from: packet.payload) else { return }
+            gamepad.handle(report, connected: packet.flags & ControllerReport.connectedFlag != 0)
         case .packet(let packet):
             handleJSONMessage(packet.payload)
         case .message(let json):
@@ -202,7 +215,8 @@ final class StreamSession {
             supportsVideoHold: true,
             supportsAudioToggle: true,
             supportsWindowSelection: true,
-            controls: PhoneControlsStore.shared.wireControls()
+            controls: PhoneControlsStore.shared.wireControls(),
+            supportsControllerInput: true
         )
     }
 

@@ -45,6 +45,7 @@
 		AA11BB22CC33DD44EE55FF68 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = AA11BB22CC33DD44EE55FF67 /* Sparkle */; };
 		BEEA00000000000000000013 /* Phoros in Frameworks */ = {isa = PBXBuildFile; productRef = BEEA00000000000000000012 /* Phoros */; };
 		BEEA00000000000000000019 /* PhorosMedia in Frameworks */ = {isa = PBXBuildFile; productRef = BEEA00000000000000000018 /* PhorosMedia */; };
+		BEEA0000000000000000001B /* PhorosInput in Frameworks */ = {isa = PBXBuildFile; productRef = BEEA0000000000000000001A /* PhorosInput */; };
 		BEEA00000000000000000017 /* PhorosNetwork in Frameworks */ = {isa = PBXBuildFile; productRef = BEEA00000000000000000016 /* PhorosNetwork */; };
 		BEEA00000000000000000015 /* PhorosSession in Frameworks */ = {isa = PBXBuildFile; productRef = BEEA00000000000000000014 /* PhorosSession */; };
 		BB00CC11DD22EE33FF44AA12 /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB00CC11DD22EE33FF44AA11 /* OnboardingView.swift */; };
@@ -112,6 +113,7 @@
 				AA11BB22CC33DD44EE55FF68 /* Sparkle in Frameworks */,
 				BEEA00000000000000000013 /* Phoros in Frameworks */,
 				BEEA00000000000000000019 /* PhorosMedia in Frameworks */,
+				BEEA0000000000000000001B /* PhorosInput in Frameworks */,
 				BEEA00000000000000000017 /* PhorosNetwork in Frameworks */,
 				BEEA00000000000000000015 /* PhorosSession in Frameworks */,
 			);
@@ -266,6 +268,7 @@
 				AA11BB22CC33DD44EE55FF67 /* Sparkle */,
 				BEEA00000000000000000012 /* Phoros */,
 				BEEA00000000000000000018 /* PhorosMedia */,
+				BEEA0000000000000000001A /* PhorosInput */,
 				BEEA00000000000000000016 /* PhorosNetwork */,
 				BEEA00000000000000000014 /* PhorosSession */,
 			);
@@ -380,8 +383,8 @@
 				);
 				LE_TEXT_BASE_ADDRESS = 0;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				CURRENT_PROJECT_VERSION = 22;
-				MARKETING_VERSION = 1.4.1;
+				CURRENT_PROJECT_VERSION = 23;
+				MARKETING_VERSION = 1.5.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.beam.beacon;
 				PRODUCT_NAME = Beacon;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -433,8 +436,8 @@
 				);
 				LE_TEXT_BASE_ADDRESS = 0;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				CURRENT_PROJECT_VERSION = 22;
-				MARKETING_VERSION = 1.4.1;
+				CURRENT_PROJECT_VERSION = 23;
+				MARKETING_VERSION = 1.5.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.beam.beacon;
 				PRODUCT_NAME = Beacon;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -507,7 +510,7 @@
 			repositoryURL = "https://github.com/kevinerikjs/phoros.git";
 			requirement = {
 				kind = exactVersion;
-				version = 1.0.0;
+				version = 1.1.0;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
@@ -537,6 +540,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = BEEA00000000000000000011 /* XCRemoteSwiftPackageReference "phoros" */;
 			productName = PhorosMedia;
+		};
+		BEEA0000000000000000001A /* PhorosInput */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BEEA00000000000000000011 /* XCRemoteSwiftPackageReference "phoros" */;
+			productName = PhorosInput;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

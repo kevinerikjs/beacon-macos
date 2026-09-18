@@ -40,14 +40,11 @@ More detail: [why AirPlay can't do this](https://beamscreen.app/guide/airplay-ma
 > does with that, the code is public so you can check. Most people should just grab the DMG above,
 > it is the same app, signed and notarized, and it updates itself.
 
-> **One difference from the shipped build, so you do not have to find it yourself.** Beacon 1.2.1
-> on the download link contains dormant, non-functional code for forwarding an iPhone-paired game
-> controller to the Mac. It cannot do anything: creating a virtual gamepad needs Apple's
-> `com.apple.developer.hid.virtual.device` entitlement, which has been requested and not granted,
-> and the feature has therefore never been tested end to end. Rather than publish code nobody can
-> run or verify, it is left out here and comes back once the entitlement lands. `StreamSession`
-> still recognises controller packets and drops them, which is why you will see `.input` referred
-> to in `Protocol.swift`.
+> **Controller passthrough needs an entitlement you cannot get from source.** Beacon replays an
+> iPhone-paired game controller into a virtual gamepad on the Mac (`PhorosInput.VirtualGamepad`).
+> Creating that device needs Apple's `com.apple.developer.hid.virtual.device` entitlement, which
+> Apple grants per developer team on request. A build without it still runs and streams; it logs
+> one line per session and drops controller input. The signed DMG above carries the entitlement.
 
 ---
 
@@ -115,7 +112,7 @@ BeamHost/
 
 Beacon is built on [Phoros](https://github.com/kevinerikjs/phoros): the wire contract it shares
 with Beam, plus the session logic (auth, send scheduling, video hold, quality adaptation), the
-framed TCP connection, and the VideoToolbox and AAC encoders. What lives in this repo is Beacon
+framed TCP connection, the VideoToolbox and AAC encoders, and the virtual gamepad. What lives in this repo is Beacon
 itself: screen capture, the menu bar, pairing UI, the Keychain, and the policy on top of the
 package (`BeamHost/Network/Protocol.swift`, `HostVideoEncoder`, `HostAudioEncoder`).
 
