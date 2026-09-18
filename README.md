@@ -66,6 +66,18 @@ More detail: [why AirPlay can't do this](https://beamscreen.app/guide/airplay-ma
 Nothing is uploaded anywhere. There is no telemetry in Beacon, no account system, and no server
 in the path between your Mac and your phone.
 
+## Dependencies
+
+Beacon has two dependencies, both MIT licensed and both compatible with the AGPL:
+
+| Package | Why |
+| --- | --- |
+| [Phoros](https://github.com/kevinerikjs/phoros) | The wire protocol and plumbing Beacon shares with Beam: framing, handshake, session logic, the framed connection, the VideoToolbox and AAC encoders, keystroke and click replay, and the virtual game controller. Pinned to an exact version, because two apps on different release schedules must not float on a shared protocol. |
+| [Sparkle](https://github.com/sparkle-project/Sparkle) | Self-updating from the appcast at beamscreen.app |
+
+Under Phoros, everything in the capture and streaming path is Apple frameworks (ScreenCaptureKit,
+VideoToolbox, AudioToolbox, Network.framework, IOKit).
+
 ## Requirements
 
 - macOS 14 Sonoma or later
@@ -124,7 +136,9 @@ package (`BeamHost/Network/Protocol.swift`, `HostVideoEncoder`, `HostAudioEncode
 
 Issues and pull requests are welcome. A few things worth knowing before you start:
 
-- Apple frameworks only. No third-party streaming or networking libraries.
+- Apple frameworks only in the streaming path, reached through Phoros. No third-party streaming or
+  networking libraries. A wire change starts in Phoros, with a pinned fixture test, and lands here
+  as a version bump.
 - Swift concurrency (`async`/`await`, actors) for anything asynchronous.
 - Test on real hardware. A PR that has only been compiled has not been tested.
 - Larger changes are best discussed in an issue first, so you do not spend a weekend on something
