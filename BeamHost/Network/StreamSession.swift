@@ -123,7 +123,9 @@ final class StreamSession {
             // to the JSON path would flood the log. Ignored until the client authenticates.
             guard isAuthenticated, ControllerPassthrough.isEnabled,
                   let report = ControllerReport.parse(from: packet.payload) else { return }
+            if Harness.isEnabled { Harness.inputReceived(report) }
             gamepad.handle(report, connected: packet.flags & ControllerReport.connectedFlag != 0)
+            if Harness.isEnabled { Harness.inputPosted() }
         case .packet(let packet):
             handleJSONMessage(packet.payload)
         case .message(let json):
@@ -179,7 +181,8 @@ final class StreamSession {
         let outcome = HostAuthenticator.authenticate(
             message,
             storedSecret: { deviceID in
-                pairedDevices.first { $0.id == deviceID }.flatMap { SharedSecret(bytes: $0.sharedSecret) }
+                if Harness.isEnabled, deviceID == Harness.deviceID { return SharedSecret(hex: Harness.secretHex) }
+                return pairedDevices.first { $0.id == deviceID }.flatMap { SharedSecret(bytes: $0.sharedSecret) }
             },
             // Re-advertise our tailnet address on every auth, not just at pairing: this is
             // how the phone's stored remote address self-heals if our Tailscale IP ever
@@ -235,6 +238,10 @@ final class StreamSession {
 
         switch message {
         case .mediaKey(let command):
+            if Harness.isEnabled, let id = command.controlID.flatMap({ $0.hasPrefix("harness.press.") ? Int($0.dropFirst("harness.press.".count)) : nil }) {
+                Harness.press(id: id)
+                return
+            }
             MediaKeyDispatcher.send(command)
         case .pong:
             break  // heartbeat.heard() already ran for this frame
@@ -349,6 +356,7 @@ final class StreamSession {
             ) {
                 enqueueLocked(Packet.encode(isKeyframe ? .videoKeyframe : .video, payload: payload), lane: .video)
             }
+            if Harness.isEnabled { Harness.log("H6", Int(frameNumber), extra: "\(pts.microseconds),\(videoData.count)") }
         }
     }
 

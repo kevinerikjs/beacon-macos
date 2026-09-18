@@ -50,6 +50,7 @@ final class HostVideoEncoder {
         }
         encoder.onFrame = { [weak self] data, pts, isKeyframe in
             guard let self else { return }
+            if Harness.isEnabled { Harness.log("H5E", Int(pts.microseconds), extra: "\(data.count),\(isKeyframe ? 1 : 0)") }
             self.delegate?.videoEncoder(self, didEncodeFrame: data, presentationTime: pts, isKeyframe: isKeyframe)
         }
         encoder.onError = { status in

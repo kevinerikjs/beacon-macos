@@ -470,7 +470,7 @@ final class StreamServer {
         let preset = qualityManager.activePreset
         // No window chosen by a phone yet: apply the Mac's "on connect" preference (BEAM-41),
         // or the last thing captured when the user asked to resume instead (BEAM-42).
-        if pendingWindowSelection == nil {
+        if pendingWindowSelection == nil, !Harness.isEnabled {   // the harness always captures the full display
             let (resume, preference, last) = await MainActor.run {
                 (appState?.resumeLastCapture ?? false, appState?.defaultWindow, appState?.lastCapture)
             }
@@ -734,6 +734,10 @@ final class StreamServer {
 extension StreamServer: ScreenCaptureDelegate {
     func screenCapture(_ capture: ScreenCapture, didOutputVideoFrame frame: CMSampleBuffer) {
         lastVideoInputFrameAt = Date()
+        if Harness.isEnabled {
+            // H5: the frame's capture time (SCK stamps PTS on the host clock) and when it reached us.
+            Harness.log("H5", Int(CMSampleBufferGetPresentationTimeStamp(frame).microseconds), extra: "")
+        }
         videoEncoder.encode(sampleBuffer: frame)
     }
 
