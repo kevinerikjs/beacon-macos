@@ -37,13 +37,13 @@ beam-macos/
 │   │   └── StatusItemView.swift     # Menu bar dropdown UI
 │   ├── Capture/
 │   │   ├── ScreenCapture.swift      # ScreenCaptureKit wrapper
-│   │   ├── VideoEncoder.swift       # VideoToolbox H.264/H.265
-│   │   └── AudioEncoder.swift       # AAC encoding
+│   │   ├── VideoEncoder.swift       # HostVideoEncoder: Beacon policy over PhorosMedia.VideoEncoder
+│   │   └── AudioEncoder.swift       # HostAudioEncoder: PCM + AAC via PhorosMedia, retry policy
 │   ├── Network/
 │   │   ├── BonjourAdvertiser.swift   # Advertise _beam._tcp service
 │   │   ├── StreamServer.swift       # Accept connections, send stream
 │   │   ├── ControlChannel.swift     # TCP control messages (media keys, etc.)
-│   │   └── Protocol.swift           # Shared message definitions
+│   │   └── Protocol.swift           # Beacon policy on top of the Phoros wire contract
 │   ├── Pairing/
 │   │   ├── PairingManager.swift     # Handle pairing flow
 │   │   ├── QRCodeGenerator.swift    # Generate pairing QR code
@@ -78,6 +78,13 @@ Source and installer DMGs both live in `kevinerikjs/beacon-macos`.
 ### Full release process (run from `beam-macos/` repo root)
 
 **1. Archive Release app** (hardened runtime + secure timestamp required for notarization)
+
+Since 1.5.0 the app carries the restricted `com.apple.developer.hid.virtual.device` entitlement
+(controller passthrough). A Developer ID app with a restricted entitlement must embed a
+provisioning profile that lists it, or Gatekeeper kills it at launch. Create one once in the
+developer portal: Profiles → + → Developer ID Application → App ID `com.beam.beacon` (with
+HID Virtual Device enabled on the App ID) → download as `BeaconDeveloperID.provisionprofile`
+and double-click to install. Then pass its name:
 ```bash
 xcodebuild archive \
   -project BeamHost.xcodeproj \
@@ -87,11 +94,14 @@ xcodebuild archive \
   CODE_SIGN_IDENTITY="Developer ID Application: KEVIN ERIK IIN (R4KDRC8S4D)" \
   CODE_SIGN_STYLE=Manual \
   DEVELOPMENT_TEAM=R4KDRC8S4D \
+  PROVISIONING_PROFILE_SPECIFIER="Beacon Developer ID" \
   ENABLE_HARDENED_RUNTIME=YES \
   CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO \
   "OTHER_CODE_SIGN_FLAGS=--timestamp"
 ```
-App is at: `/tmp/Beacon.xcarchive/Products/Applications/Beacon.app`
+App is at: `/tmp/Beacon.xcarchive/Products/Applications/Beacon.app`. Check the entitlement made it:
+`codesign -d --entitlements - "$APP" | grep hid.virtual` and
+`ls "$APP/Contents/embedded.provisionprofile"`.
 
 > **Note:** The Sparkle framework's nested binaries (Updater.app, Autoupdate, XPC services) are NOT re-signed by the archive step and will fail notarization. Always run step 1.5 before creating the DMG.
 

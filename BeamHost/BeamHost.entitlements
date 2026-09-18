@@ -10,6 +10,11 @@
 	<key>com.apple.security.cs.allow-jit</key>
 	<false/>
 
+	<!-- Virtual HID gamepad for controller passthrough (IOHIDUserDevice via PhorosInput).
+	     Approval-gated capability, granted to team R4KDRC8S4D in September 2026. Builds
+	     need a provisioning profile that includes it (see README, Release). -->
+	<key>com.apple.developer.hid.virtual.device</key>
+	<true/>
 
 </dict>
 </plist>
