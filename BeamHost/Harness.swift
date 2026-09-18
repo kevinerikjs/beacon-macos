@@ -13,10 +13,12 @@
 
 import AppKit
 import Foundation
+import ScreenCaptureKit
 import GameController
 import OSLog
 import Phoros
 import PhorosInput
+import PhorosMedia
 
 enum Harness {
     static let isEnabled = ProcessInfo.processInfo.environment["BEACON_HARNESS"] == "1"
@@ -30,8 +32,50 @@ enum Harness {
     private static var pad: VirtualGamepad?
     private static var padDown = false
     private static var flash: HarnessFlashWindow?
+    static var flashWindowNumber: Int = 0
+
+    /// The flash window as ScreenCaptureKit sees it, for window-mode capture.
+    static func flashSCWindow() async -> SCWindow? {
+        for _ in 0..<20 {
+            if flashWindowNumber != 0, let w = await ScreenCapture.availableWindows().first(where: { Int($0.windowID) == flashWindowNumber }) {
+                logger.warning("harness window as SCK sees it: \(String(describing: w.frame), privacy: .public) layer \(w.windowLayer)")
+                return w
+            }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        return nil
+    }
     private static var lastInputA = false
     private static var inputPressCounter = 0
+
+    /// Experiment switches, only in harness mode, from BEACON_EXP="key=value,key=value".
+    /// Keys: delay0, speed, llrc, profile=baseline|main|high, burst=<x>|none, queue=<n>.
+    static let experiment: [String: String] = {
+        guard isEnabled, let raw = ProcessInfo.processInfo.environment["BEACON_EXP"] else { return [:] }
+        var out: [String: String] = [:]
+        for item in raw.split(separator: ",") {
+            let kv = item.split(separator: "=", maxSplits: 1).map(String.init)
+            out[kv[0]] = kv.count > 1 ? kv[1] : "1"
+        }
+        return out
+    }()
+
+    static func encoderTuning() -> VideoEncoderConfiguration.LatencyTuning {
+        var t = VideoEncoderConfiguration.LatencyTuning()
+        guard isEnabled else { return t }
+        if experiment["delay0"] != nil { t.maxFrameDelayCount = 0 }
+        if experiment["speed"] != nil { t.prioritizeSpeed = true }
+        if experiment["llrc"] != nil { t.lowLatencyRateControl = true }
+        switch experiment["profile"] {
+        case "baseline": t.h264Profile = .baseline
+        case "main": t.h264Profile = .main
+        default: break
+        }
+        if let b = experiment["burst"] { t.burstMultiplier = b == "none" ? nil : Double(b) }
+        return t
+    }
+
+    static var captureQueueDepth: Int? { experiment["queue"].flatMap(Int.init) }
 
     static var timebase: mach_timebase_info_data_t = { var t = mach_timebase_info_data_t(); mach_timebase_info(&t); return t }()
     static func nowNanos() -> UInt64 { mach_absolute_time() * UInt64(timebase.numer) / UInt64(timebase.denom) }
@@ -100,14 +144,25 @@ final class HarnessFlashWindow {
     private var moverX: CGFloat = 0
 
     init() {
+        // A 1920x1080 window at the back of the normal level, in the bottom-right corner. Beacon
+        // captures this window alone (window mode), so the person can keep using the Mac and
+        // whatever covers the window does not reach the capture.
         let screen = NSScreen.main ?? NSScreen.screens[0]
-        window = NSWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
-        window.level = .screenSaver
+        let size = NSSize(width: 1920, height: 1080)
+        let origin = NSPoint(x: screen.frame.maxX - size.width, y: screen.frame.minY)
+        window = NSWindow(contentRect: NSRect(origin: origin, size: size), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.title = "Beam latency harness"
+        window.setContentSize(size)
+        window.contentMinSize = size
+        window.contentMaxSize = size
+        window.level = .normal
         window.backgroundColor = .black
         window.isOpaque = true
         window.ignoresMouseEvents = true
-        window.collectionBehavior = [.canJoinAllSpaces, .stationary]
-        window.orderFrontRegardless()
+        window.hidesOnDeactivate = false
+        window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+        window.orderBack(nil)
+        Harness.flashWindowNumber = window.windowNumber
 
         // ScreenCaptureKit only delivers frames when pixels change. A game changes every frame,
         // so keep a small grey square moving along the bottom edge (outside the luma patch).
@@ -118,7 +173,7 @@ final class HarnessFlashWindow {
         t.schedule(deadline: .now(), repeating: 1.0 / 60.0, leeway: .milliseconds(1))
         t.setEventHandler { [weak self] in
             guard let self else { return }
-            moverX = (moverX + 8).truncatingRemainder(dividingBy: screen.frame.width - 24)
+            moverX = (moverX + 8).truncatingRemainder(dividingBy: size.width - 24)
             mover.frame.origin = CGPoint(x: moverX, y: 8)
         }
         t.resume()

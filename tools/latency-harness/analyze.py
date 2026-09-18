@@ -27,7 +27,9 @@ h6 = {int(e[3][0]): e for e in by(b, "H6")}             # keyed by pts_us, extra
 h6_by_frame = {e[1]: e for e in by(b, "H6")}
 h7 = {e[1]: e for e in by(c, "H7")}; h8 = {e[1]: e for e in by(c, "H8")}
 # pts -> frame number via H6 (extra[0] = pts_us)
-pts_to_frame = {int(e[3][0]): e[1] for e in by(b, "H6")}
+pts_to_frame = {}
+for e in by(b, "H6"):
+    pts_to_frame.setdefault(int(e[3][0]), e[1])   # first occurrence wins: a restarted encoder can repeat a PTS
 frame_to_pts = {v: k for k, v in pts_to_frame.items()}
 h5_pts = [e[1] for e in h5]
 h5_by_pts = {e[1]: e for e in h5}
@@ -43,18 +45,24 @@ for pid in sorted(h0):
     if t4 is not None:
         # first captured frame whose PTS (host clock, us) is at/after the flip
         t4_us = t4 // 1000
-        cand = [p for p in h5_pts if p >= t4_us]
+        # first captured frame at/after the flip that the encoder actually emitted (some are dropped)
+        cand = [p for p in h5_pts if p >= t4_us and p in pts_to_frame]
         if cand:
             pts = cand[0]; fr = pts_to_frame.get(pts)
             r["flip_to_capture"] = (pts - t4_us) / 1000
             r["capture_to_delivered"] = d(pts * 1000, h5_by_pts[pts][2])
             r["delivered_to_encoded"] = d(h5_by_pts[pts][2], h5e.get(pts, [None]*3)[2])
             if fr is not None:
-                r["encoded_to_queued"] = d(h5e.get(pts, [None]*3)[2], h6_by_frame[fr][2])
-                r["queued_to_assembled"] = d(h6_by_frame[fr][2], h7.get(fr, [None]*3)[2])
+                # H6 is stamped after the enqueue; on loopback a tiny frame can be assembled before
+                # that stamp lands, so a negative queue time is noise, not a signal.
+                if fr in h6_by_frame and fr in h7 and h7[fr][2] >= h6_by_frame[fr][2]:
+                    r["encoded_to_queued"] = d(h5e.get(pts, [None]*3)[2], h6_by_frame[fr][2])
+                    r["queued_to_assembled"] = d(h6_by_frame[fr][2], h7[fr][2])
+                elif fr in h7:
+                    r["encoded_to_assembled"] = d(h5e.get(pts, [None]*3)[2], h7[fr][2])
                 # detection: the first H8 with frame >= fr
                 det = sorted([f for f in h8 if f >= fr])
-                if det:
+                if det and det[0] - fr <= 60:
                     r["assembled_to_detected"] = d(h7.get(det[0], [None]*3)[2], h8[det[0]][2])
                     r["detect_frame_offset"] = det[0] - fr
                     r["total"] = d(t0, h8[det[0]][2]); r["video"] = d(t4, h8[det[0]][2])
@@ -65,8 +73,9 @@ def pct(vals, p):
     if not v: return None
     k = (len(v) - 1) * p; f = int(k); c2 = min(f + 1, len(v) - 1)
     return v[f] + (v[c2] - v[f]) * (k - f)
-cols = ["h0_h1","h1_h2","h2_h3","h3_h4","flip_to_capture","capture_to_delivered","delivered_to_encoded","encoded_to_queued","queued_to_assembled","assembled_to_detected","video","total"]
-print(f"presses={len(rows)}  with total={sum(1 for r in rows if r.get('total') is not None)}  frames H7={len(h7)} H8 flips={len(h8)}  detect frame offset p50={pct([r.get('detect_frame_offset') for r in rows],0.5)}")
+cols = ["h0_h1","h1_h2","h2_h3","h3_h4","flip_to_capture","capture_to_delivered","delivered_to_encoded","encoded_to_queued","queued_to_assembled","encoded_to_assembled","assembled_to_detected","detect_frame_offset","video","total"]
+offs=[r.get("detect_frame_offset") for r in rows]
+print(f"presses={len(rows)}  with total={sum(1 for r in rows if r.get('total') is not None)}  frames H7={len(h7)} H8 flips={len(h8)}  detect frame offset p50={pct(offs,0.5)} p95={pct(offs,0.95)} late(>2)={sum(1 for o in offs if o is not None and o>2)}")
 print(f"{'stage':24s} {'p50':>8s} {'p90':>8s} {'p95':>8s} {'max':>8s}")
 summary = {}
 for col in cols:

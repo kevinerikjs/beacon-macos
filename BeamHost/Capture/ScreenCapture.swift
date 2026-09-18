@@ -52,6 +52,7 @@ final class ScreenCapture: NSObject {
     func frameSize(for window: SCWindow?, preset: QualityPreset? = nil, lock: CGRect? = nil) -> CGSize {
         let pw = preset?.width ?? presetWidth
         let ph = preset?.height ?? presetHeight
+        if Harness.isEnabled { return CGSize(width: pw, height: ph) }   // deterministic frames for the harness
         let source: CGSize
         if let window, window.frame.width > 0, window.frame.height > 0 {
             source = window.frame.size
@@ -320,7 +321,7 @@ final class ScreenCapture: NSObject {
         config.width = currentWidth
         config.height = currentHeight
         config.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(currentFrameRate))
-        config.queueDepth = 5
+        config.queueDepth = Harness.captureQueueDepth ?? 5
         config.pixelFormat = kCVPixelFormatType_32BGRA
         config.scalesToFit = true
         config.showsCursor = true

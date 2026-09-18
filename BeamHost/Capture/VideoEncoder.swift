@@ -41,7 +41,8 @@ final class HostVideoEncoder {
     init(width: Int32, height: Int32, frameRate: Double = 30, bitrateMbps: Double = 6, codec: VideoCodecID = .h264) {
         encoder = PhorosMedia.VideoEncoder(configuration: VideoEncoderConfiguration(
             width: width, height: height, frameRate: frameRate,
-            bitrateBitsPerSecond: Int(bitrateMbps * 1_000_000), codec: codec
+            bitrateBitsPerSecond: Int(bitrateMbps * 1_000_000), codec: codec,
+            latency: Harness.encoderTuning()
         ))
         encoder.onParameterSets = { [weak self] data, codec in
             guard let self else { return }

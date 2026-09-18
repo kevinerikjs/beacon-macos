@@ -4,7 +4,9 @@
 
 import Network
 import Phoros
+import PhorosNetwork
 import Phoros
+import PhorosNetwork
 import ScreenCaptureKit
 import OSLog
 
@@ -137,7 +139,7 @@ final class StreamServer {
 
     func start() {
         do {
-            let params = NWParameters.tcp
+            let params = PhorosConnection.parameters()
             params.includePeerToPeer = true
 
             listener = try NWListener(using: params, on: NWEndpoint.Port(rawValue: listeningPort) ?? 7979)
@@ -470,7 +472,11 @@ final class StreamServer {
         let preset = qualityManager.activePreset
         // No window chosen by a phone yet: apply the Mac's "on connect" preference (BEAM-41),
         // or the last thing captured when the user asked to resume instead (BEAM-42).
-        if pendingWindowSelection == nil, !Harness.isEnabled {   // the harness always captures the full display
+        if Harness.isEnabled {
+            // The harness captures its own flash window, so the rest of the Mac stays usable.
+            pendingWindowSelection = await Harness.flashSCWindow()
+        }
+        if pendingWindowSelection == nil, !Harness.isEnabled {
             let (resume, preference, last) = await MainActor.run {
                 (appState?.resumeLastCapture ?? false, appState?.defaultWindow, appState?.lastCapture)
             }
