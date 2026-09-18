@@ -2,6 +2,7 @@
 // Preferences window for Beacon.
 
 import SwiftUI
+import PhorosInput
 import Phoros
 import Carbon.HIToolbox
 import ScreenCaptureKit
@@ -225,6 +226,27 @@ struct ControlsSettingsTab: View {
                     .foregroundStyle(.secondary)
 
                 layoutControls
+
+                settingsGroup(header: "Game controller passthrough") {
+                    settingsRow("Appears on the Mac as") {
+                        Picker("", selection: Binding(
+                            get: { GamepadProfile.selected },
+                            set: { GamepadProfile.selected = $0 }
+                        )) {
+                            ForEach(GamepadProfile.allCases, id: \.self) { profile in
+                                Text(profile.displayName).tag(profile)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(width: 260)
+                    }
+                    Divider().padding(.leading, 12)
+                    Text("A controller paired to the iPhone plays on this Mac. Xbox or PlayStation lets macOS apply its own button layout. Takes effect on the next connection.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                }
 
                 let layout = store.activeLayout
                 settingsGroup(header: "Buttons") {

@@ -64,3 +64,26 @@ extension CMTime {
         return Int64(Double(value) / Double(timescale) * 1_000_000)
     }
 }
+
+import PhorosInput
+
+extension GamepadProfile {
+    /// UserDefaults key for the identity Beacon's virtual controller presents.
+    static let defaultsKey = "BeaconVirtualControllerProfile"
+
+    /// The stored choice, Xbox when unset. Xbox and PlayStation are adopted by
+    /// macOS's GameController framework, so every game sees the same layout;
+    /// Generic only reaches games that read raw HID and guess.
+    static var selected: GamepadProfile {
+        get { UserDefaults.standard.string(forKey: defaultsKey).flatMap(GamepadProfile.init(rawValue:)) ?? .xboxOne }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: defaultsKey) }
+    }
+
+    var displayName: String {
+        switch self {
+        case .xboxOne: return "Xbox controller"
+        case .dualShock4: return "PlayStation controller (DualShock 4)"
+        case .generic: return "Generic gamepad"
+        }
+    }
+}

@@ -61,7 +61,7 @@ final class StreamSession {
     private var hold = VideoHold()
     private var heartbeat = HeartbeatMonitor()
     /// One virtual pad per session. Beacon streams to one client at a time.
-    private let gamepad = VirtualGamepad(productName: "Beam Controller", manufacturer: "Beam")
+    private let gamepad = VirtualGamepad(profile: GamepadProfile.selected)
     private var heartbeatTimer: DispatchSourceTimer?
     private var lastDropLogAt = Date.distantPast
 
@@ -82,7 +82,7 @@ final class StreamSession {
         link.onFrame = { [weak self] frame in self?.handleFrame(frame) }
         gamepad.onEvent = { [id] event in
             switch event {
-            case .created: logger.info("Session \(id) virtual gamepad created")
+            case .created: logger.info("Session \(id) virtual gamepad created as \(GamepadProfile.selected.rawValue, privacy: .public)")
             case .released: logger.info("Session \(id) virtual gamepad removed")
             case .creationFailed:
                 logger.error("Session \(id) failed to create the virtual gamepad: the com.apple.developer.hid.virtual.device entitlement is missing from this build. Controller input will be dropped.")
