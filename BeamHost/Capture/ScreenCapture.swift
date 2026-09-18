@@ -4,6 +4,7 @@
 
 import ScreenCaptureKit
 import Phoros
+import PhorosInput
 import CoreMedia
 import CoreVideo
 import OSLog
@@ -266,28 +267,14 @@ final class ScreenCapture: NSObject {
         } else {
             return nil
         }
-        guard sourceFrame.width > 0, sourceFrame.height > 0 else { return nil }
-
-        // The region of the source the frame shows: the lock, or the whole source.
-        let shown = sourceLockedViewport ?? CGRect(x: 0, y: 0, width: 1, height: 1)
-        // Inside the frame, the shown region is letterboxed if its aspect differs from the
-        // frame's (only on a full display; window and lock frames match their source).
-        let shownPixels = CGSize(width: shown.width * sourceFrame.width, height: shown.height * sourceFrame.height)
-        let frameSize = CGSize(width: currentWidth, height: currentHeight)
-        // The rect mapper rejects empty rects, so map a hairline rect and keep its origin.
-        let mapped = sourceNormalizedViewport(
-            fromFrameNormalizedRect: CGRect(origin: point, size: CGSize(width: 0.001, height: 0.001)),
-            sourceSize: shownPixels,
-            frameSize: frameSize
+        let point = FrameMapping.sourcePoint(
+            forFramePoint: point,
+            sourceFrame: sourceFrame,
+            shownViewport: sourceLockedViewport,
+            frameSize: CGSize(width: currentWidth, height: currentHeight)
         )
-        guard !mapped.isNull else {
-            logger.warning("Phone click outside the shown region")
-            return nil
-        }
-        let inShown = CGPoint(x: mapped.origin.x.clamped(to: 0...1), y: mapped.origin.y.clamped(to: 0...1))
-        let inSource = CGPoint(x: shown.minX + inShown.x * shown.width, y: shown.minY + inShown.y * shown.height)
-        return CGPoint(x: sourceFrame.minX + inSource.x * sourceFrame.width,
-                       y: sourceFrame.minY + inSource.y * sourceFrame.height)
+        if point == nil { logger.warning("Phone click outside the shown region") }
+        return point
     }
 
     /// Convert a phone-side lock (normalised to the frame the phone is currently showing) into
@@ -308,8 +295,8 @@ final class ScreenCapture: NSObject {
         } else {
             return nil
         }
-        let mapped = sourceNormalizedViewport(
-            fromFrameNormalizedRect: clamped,
+        let mapped = FrameMapping.sourceRect(
+            fromFrameRect: clamped,
             sourceSize: sourceSize,
             frameSize: CGSize(width: currentWidth, height: currentHeight)
         )
@@ -380,7 +367,7 @@ final class ScreenCapture: NSObject {
             // By default SCKit aligns window content to the top-left of the output buffer,
             // producing an asymmetric black region (e.g. all black at the bottom for a wide window).
             // Centering via destinationRect gives symmetric letterbox/pillarbox AND makes the
-            // coordinate math in sourceNormalizedViewport (which assumes centered content) correct,
+            // coordinate math in FrameMapping (which assumes centered content) correct,
             // so viewport lock selections map to the right source region.
             let sourceWidth = currentWindow.frame.width
             let sourceHeight = currentWindow.frame.height
@@ -408,43 +395,6 @@ final class ScreenCapture: NSObject {
 
     /// Convert iOS lock coordinates from encoded-frame normalized space into source-content normalized space.
     /// This compensates for letterbox/pillarbox introduced by `scalesToFit` when source and output aspect differ.
-    private func sourceNormalizedViewport(
-        fromFrameNormalizedRect frameRect: CGRect,
-        sourceSize: CGSize,
-        frameSize: CGSize
-    ) -> CGRect {
-        guard
-            frameSize.width > 0, frameSize.height > 0,
-            sourceSize.width > 0, sourceSize.height > 0
-        else {
-            return .null
-        }
-
-        let frameAspect = frameSize.width / frameSize.height
-        let sourceAspect = sourceSize.width / sourceSize.height
-
-        var contentRectInFrame = CGRect(x: 0, y: 0, width: 1, height: 1)
-        if sourceAspect > frameAspect {
-            let contentHeight = (frameAspect / sourceAspect).clamped(to: 0.001...1)
-            contentRectInFrame = CGRect(x: 0, y: (1 - contentHeight) / 2, width: 1, height: contentHeight)
-        } else if sourceAspect < frameAspect {
-            let contentWidth = (sourceAspect / frameAspect).clamped(to: 0.001...1)
-            contentRectInFrame = CGRect(x: (1 - contentWidth) / 2, y: 0, width: contentWidth, height: 1)
-        }
-
-        let mapped = CGRect(
-            x: (frameRect.minX - contentRectInFrame.minX) / contentRectInFrame.width,
-            y: (frameRect.minY - contentRectInFrame.minY) / contentRectInFrame.height,
-            width: frameRect.width / contentRectInFrame.width,
-            height: frameRect.height / contentRectInFrame.height
-        )
-
-        let unit = CGRect(x: 0, y: 0, width: 1, height: 1)
-        let normalized = mapped.intersection(unit)
-        guard !normalized.isNull, normalized.width > 0, normalized.height > 0 else { return .null }
-        return normalized
-    }
-
     /// Fits `rect` to the encoded frame's aspect (16:9 on a full display; the window's aspect in
     /// window mode, BEAM-38) so a lock never reintroduces letterboxing.
     private func constrainedRect(from rect: CGRect, within bounds: CGRect, aspect targetAspect: CGFloat) -> CGRect {
