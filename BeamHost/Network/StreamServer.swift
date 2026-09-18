@@ -200,6 +200,18 @@ final class StreamServer {
     }
 
     /// Called by a session after it completes authentication.
+    /// A session dropped a delta frame to keep latency bounded and needs a keyframe to recover.
+    /// Coalesced: many drops in one burst produce one request.
+    private var keyframeRecoveryPending = false
+    func requestKeyframeForRecovery() {
+        guard !keyframeRecoveryPending else { return }
+        keyframeRecoveryPending = true
+        videoEncoder.requestKeyframe()
+        DispatchQueue.global(qos: .userInteractive).asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            self?.keyframeRecoveryPending = false
+        }
+    }
+
     func sessionAuthenticated(_ session: StreamSession, deviceName: String) {
         // If this device reconnects while an old session is still hanging around,
         // drop the stale duplicate so only one stream session remains for it.
@@ -255,6 +267,7 @@ final class StreamServer {
             }
             videoEncoder.requestKeyframe()
         }
+        session.setMaximumBitrate(Int(qualityManager.activePreset.bitrateMbps * 1_000_000))
         session.beginReceivingStream(videoEncoder: videoEncoder, audioEncoder: audioEncoder)
 
         // Start the continuous capture watchdog once a client is active.
@@ -392,6 +405,15 @@ final class StreamServer {
         logger.info("Quality broadcast → \(preset.rawValue)")
     }
 
+    /// A session's bitrate controller moved. The shared encoder runs at the lowest rate any
+    /// session wants: a fast link waiting on a slow one is better than a slow link that
+    /// never catches up.
+    func session(_ session: StreamSession, wantsBitrate: Int) {
+        let sessions = sessionsQueue.sync { Array(activeSessions.values) }
+        let lowest = sessions.map(\.wantedBitrate).min() ?? wantsBitrate
+        videoEncoder.setBitrate(lowest)
+    }
+
     func broadcastAudioFormatChanged(sampleRate: Double, channels: Int) {
         let sessions = sessionsQueue.sync { Array(activeSessions.values) }
         sessions.forEach { $0.sendAudioFormatChanged(sampleRate: sampleRate, channels: channels) }
@@ -401,6 +423,7 @@ final class StreamServer {
     private func applyQualityPreset(_ preset: QualityPreset) {
         // Keep the window's aspect across quality changes (BEAM-38).
         videoEncoder.reconfigure(preset: preset, frameSize: screenCapture.frameSize(for: pendingWindowSelection, preset: preset, lock: screenCapture.sourceLockedViewport))
+        sessionsQueue.sync { Array(activeSessions.values) }.forEach { $0.setMaximumBitrate(Int(preset.bitrateMbps * 1_000_000)) }
         // The preset is the only signal the host has for "constrained link", and the auto
         // tiering drives it down on exactly those links. Bitrate is settable live, so this
         // neither tears down the converter nor re-anchors the PTS clock.
@@ -743,6 +766,16 @@ extension StreamServer: ScreenCaptureDelegate {
         if Harness.isEnabled {
             // H5: the frame's capture time (SCK stamps PTS on the host clock) and when it reached us.
             Harness.log("H5", Int(CMSampleBufferGetPresentationTimeStamp(frame).microseconds), extra: "")
+        }
+        if Harness.experiment["nogate"] == nil {
+            // Skip the frame when no session can take it. The encoder never sees it, so no
+            // reference breaks and no recovery keyframe follows; the next frame the link
+            // has room for is encoded against the last one it sent.
+            let sessions = sessionsQueue.sync { Array(activeSessions.values) }
+            if !sessions.isEmpty, !sessions.contains(where: \.acceptsVideoFrame) {
+                if Harness.isEnabled { Harness.log("H5S", Int(CMSampleBufferGetPresentationTimeStamp(frame).microseconds)) }
+                return
+            }
         }
         videoEncoder.encode(sampleBuffer: frame)
     }

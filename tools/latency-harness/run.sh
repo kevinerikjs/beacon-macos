@@ -13,7 +13,15 @@ BEACON_PID=$!
 # wait for the listener
 for i in $(seq 1 40); do nc -z 127.0.0.1 7979 2>/dev/null && break; sleep 0.25; done
 sleep 1.5
+SHAPER_PID=""
+if [ -n "${SHAPE:-}" ]; then
+  # SHAPE="--down-mbps 8 --delay-ms 5"
+  python3 "$HERE/shaper.py" --listen 7980 --target 7979 $SHAPE >"$OUT/shaper.log" 2>&1 &
+  SHAPER_PID=$!; sleep 0.5
+  export HARNESS_PORT=7980
+fi
 "$HERE/.build/release/harness-client" "$PRESSES" "$INTERVAL" "$OUT/client.log" "$PRESET" 2>"$OUT/client.stderr" || true
+[ -n "$SHAPER_PID" ] && kill $SHAPER_PID 2>/dev/null
 sleep 0.5
 kill $BEACON_PID 2>/dev/null || true; sleep 1
 open -g /Applications/Beacon.app 2>/dev/null || true

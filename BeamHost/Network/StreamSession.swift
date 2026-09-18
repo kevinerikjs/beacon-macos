@@ -63,6 +63,9 @@ final class StreamSession {
     /// One virtual pad per session. Beacon streams to one client at a time.
     private let gamepad = VirtualGamepad(profile: GamepadProfile.selected)
     private var heartbeatTimer: DispatchSourceTimer?
+    private var probeTimer: DispatchSourceTimer?
+    private var probe = RoundTripProbe(staleAfter: 1)
+    private var bitrate = BitrateController(maximum: 6_000_000)
     private var lastDropLogAt = Date.distantPast
 
     private let stateQueue = DispatchQueue(label: "com.beam.session.state", qos: .userInteractive)
@@ -108,6 +111,8 @@ final class StreamSession {
         isTerminated = true
         heartbeatTimer?.cancel()
         heartbeatTimer = nil
+        probeTimer?.cancel()
+        probeTimer = nil
         gamepad.release()
         link.cancel()
         logger.info("Session \(self.id) disconnected")
@@ -198,7 +203,7 @@ final class StreamSession {
             negotiatedAudioCodec = session.audioCodec
             negotiatedVideoCodec = session.videoCodec
             wantsAudio = session.peer.wantsAudio
-            scheduler.policy = session.audioCodec == .pcmFloat32 ? .pcmAudio : SendPolicy()
+            scheduler.policy = Harness.sendPolicy(base: session.audioCodec == .pcmFloat32 ? .pcmAudio : SendPolicy())
             isAuthenticated = true
             authenticatedDeviceID = session.deviceID
             sendPairingResponse(session.reply)
@@ -244,7 +249,17 @@ final class StreamSession {
             }
             MediaKeyDispatcher.send(command)
         case .pong:
-            break  // heartbeat.heard() already ran for this frame
+            // heartbeat.heard() already ran for this frame. The round trip of this pong is
+            // the link's queueing delay: the ping waited behind every queued video byte.
+            if let rtt = probe.receivedPong() {
+                bitrate.observe(roundTrip: rtt)
+                if Harness.isEnabled { Harness.log("RTT", Int(rtt * 1_000_000), extra: "\(Int(bitrate.queueDelay * 1_000_000)),\(bitrate.current)") }
+                if let next = bitrate.evaluate() {
+                    logger.info("Link queue \(Int(self.bitrate.queueDelay * 1000)) ms, bitrate → \(next / 1000) kbps")
+                    wantedBitrate = next
+                    server?.session(self, wantsBitrate: next)
+                }
+            }
         case .ping:
             sendControl(.pong)
         case .videoPause:
@@ -316,6 +331,43 @@ final class StreamSession {
     func beginReceivingStream(videoEncoder: HostVideoEncoder, audioEncoder: HostAudioEncoder) {
         logger.info("Session \(self.id) ready for streaming")
         startHeartbeat()
+        startLinkProbe()
+    }
+
+    /// The bitrate this session's link can carry right now, as the controller sees it.
+    /// Mirrored out of `stateQueue` so the server can read it from any queue without
+    /// blocking on the session (the controller reports from `stateQueue` itself).
+    private(set) var wantedBitrate: Int {
+        get { wantedBitrateLock.withLock { _wantedBitrate } }
+        set { wantedBitrateLock.withLock { _wantedBitrate = newValue } }
+    }
+    private var _wantedBitrate = Int.max
+    private let wantedBitrateLock = NSLock()
+
+    /// A new preset: the controller's ceiling follows it.
+    func setMaximumBitrate(_ bitsPerSecond: Int) {
+        stateQueue.async { [self] in
+            bitrate.setMaximum(bitsPerSecond)
+            wantedBitrate = bitrate.current
+        }
+    }
+
+    /// Whether the transport has room for another encoded frame. Read from the capture
+    /// thread before the encode, so a frame the link cannot take is skipped for free.
+    var acceptsVideoFrame: Bool { stateQueue.sync { !isAuthenticated || hold.isHeld || scheduler.shouldEncodeVideo() } }
+
+    /// Pings the client five times a second while streaming. The reply's round trip feeds
+    /// the bitrate controller; the client already answers pings for its own probe.
+    private func startLinkProbe() {
+        guard Harness.experiment["noabr"] == nil else { return }
+        let timer = DispatchSource.makeTimerSource(queue: stateQueue)
+        timer.schedule(deadline: .now() + 0.2, repeating: 0.2, leeway: .milliseconds(5))
+        timer.setEventHandler { [weak self] in
+            guard let self, self.isAuthenticated, !self.hold.isHeld, self.probe.shouldSend() else { return }
+            self.sendControl(.ping)
+        }
+        timer.resume()
+        probeTimer = timer
     }
 
     private func startHeartbeat() {
@@ -351,11 +403,13 @@ final class StreamSession {
             }
             let frameNumber = videoFrameNumber
             videoFrameNumber &+= 1
-            for payload in VideoFragmentHeader.fragment(
+            // One write per frame: the packets stay identical on the wire, the transport just
+            // gets them together instead of forty separate sends.
+            let packets = VideoFragmentHeader.fragment(
                 videoData, frameNumber: frameNumber, presentationTimestamp: pts.microseconds, maximumPayloadLength: kMaxMediaPayload
-            ) {
-                enqueueLocked(Packet.encode(isKeyframe ? .videoKeyframe : .video, payload: payload), lane: .video)
-            }
+            ).map { Packet.encode(isKeyframe ? .videoKeyframe : .video, payload: $0).lengthPrefixed() }
+            scheduler.enqueueVideoFrame(packets, isKeyframe: isKeyframe)
+            drain()
             if Harness.isEnabled { Harness.log("H6", Int(frameNumber), extra: "\(pts.microseconds),\(videoData.count)") }
         }
     }
@@ -400,6 +454,11 @@ final class StreamSession {
 
     /// stateQueue only. Hands writes to the transport, control first, then audio, then video.
     private func drain() {
+        defer {
+            // A shed or refused delta frame leaves the decoder with a broken reference chain
+            // until the next keyframe. Ask for one now instead of waiting up to two seconds.
+            if scheduler.needsKeyframe { server?.requestKeyframeForRecovery() }
+        }
         while let write = scheduler.dequeue() {
             link.connection.send(content: write.data, completion: .contentProcessed { [weak self] error in
                 guard let self else { return }

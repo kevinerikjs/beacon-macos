@@ -19,6 +19,7 @@ import OSLog
 import Phoros
 import PhorosInput
 import PhorosMedia
+import PhorosSession
 
 enum Harness {
     static let isEnabled = ProcessInfo.processInfo.environment["BEACON_HARNESS"] == "1"
@@ -76,6 +77,18 @@ enum Harness {
     }
 
     static var captureQueueDepth: Int? { experiment["queue"].flatMap(Int.init) }
+    /// BEACON_EXP=gop=10: seconds between periodic keyframes (default 2).
+    static var keyframeInterval: Double? { experiment["gop"].flatMap(Double.init) }
+
+    /// `sched=old` reproduces the shipped scheduler: no queue-age shedding and a byte budget the
+    /// in-flight counter alone could never reach, so nothing is ever dropped.
+    static func sendPolicy(base: SendPolicy) -> SendPolicy {
+        guard isEnabled, experiment["sched"] == "old" else { return base }
+        var p = base
+        p.maximumQueuedBytes = Int.max / 2
+        p.maximumVideoQueueAge = 1e9
+        return p
+    }
 
     static var timebase: mach_timebase_info_data_t = { var t = mach_timebase_info_data_t(); mach_timebase_info(&t); return t }()
     static func nowNanos() -> UInt64 { mach_absolute_time() * UInt64(timebase.numer) / UInt64(timebase.denom) }
@@ -142,6 +155,8 @@ final class HarnessFlashWindow {
     private let mover = NSView(frame: NSRect(x: 0, y: 0, width: 24, height: 24))
     private var moverTimer: DispatchSourceTimer?
     private var moverX: CGFloat = 0
+    private var loadLayers: [CALayer] = []
+    private var loadPhase: Double = 0
 
     init() {
         // A 1920x1080 window at the back of the normal level, in the bottom-right corner. Beacon
@@ -171,10 +186,41 @@ final class HarnessFlashWindow {
         window.contentView?.addSubview(mover)
         let t = DispatchSource.makeTimerSource(queue: .main)
         t.schedule(deadline: .now(), repeating: 1.0 / 60.0, leeway: .milliseconds(1))
+        // BEACON_EXP=load fills the bands above and below the client's centre luma patch with
+        // noise that changes every frame, so the encoder works at game-like bitrates instead of
+        // the ~30 kbps a black window with one moving square produces.
+        if Harness.experiment["load"] != nil, let content = window.contentView {
+            content.wantsLayer = true
+            let noise = HarnessFlashWindow.noiseImage(side: 256)
+            for y: CGFloat in [0, size.height - 320] {
+                let layer = CALayer()
+                layer.frame = CGRect(x: 0, y: y, width: size.width, height: 320)
+                layer.contents = noise
+                layer.contentsGravity = .resize
+                layer.magnificationFilter = .nearest
+                layer.actions = ["contentsRect": NSNull()]
+                content.layer?.addSublayer(layer)
+                loadLayers.append(layer)
+            }
+        }
         t.setEventHandler { [weak self] in
             guard let self else { return }
             moverX = (moverX + 8).truncatingRemainder(dividingBy: size.width - 24)
             mover.frame.origin = CGPoint(x: moverX, y: 8)
+            if !loadLayers.isEmpty {
+                CATransaction.begin(); CATransaction.setDisableActions(true)
+                // Scroll the texture a few pixels per frame (game-like motion the encoder can
+                // predict) instead of jumping to random noise (worst-case entropy, which no
+                // real content has). BEACON_EXP=load=noise keeps the random jump.
+                let jump = Harness.experiment["load"] == "noise"
+                loadPhase += 0.0045
+                for (i, layer) in loadLayers.enumerated() {
+                    let ox = jump ? CGFloat.random(in: 0...0.5) : 0.25 + 0.25 * cos(loadPhase * (i == 0 ? 1 : 1.3))
+                    let oy = jump ? CGFloat.random(in: 0...0.5) : 0.25 + 0.25 * sin(loadPhase * (i == 0 ? 0.7 : 1))
+                    layer.contentsRect = CGRect(x: ox, y: oy, width: 0.5, height: 0.5)
+                }
+                CATransaction.commit()
+            }
         }
         t.resume()
         moverTimer = t
@@ -185,6 +231,17 @@ final class HarnessFlashWindow {
             if let c = n.object as? GCController { self?.attach(c) }
         })
         GCController.controllers().forEach(attach)
+    }
+
+    private static func noiseImage(side: Int) -> CGImage? {
+        var bytes = [UInt8](repeating: 0, count: side * side * 4)
+        for i in stride(from: 0, to: bytes.count, by: 4) {
+            bytes[i] = .random(in: 0...255); bytes[i + 1] = .random(in: 0...255); bytes[i + 2] = .random(in: 0...255); bytes[i + 3] = 255
+        }
+        guard let provider = CGDataProvider(data: Data(bytes) as CFData) else { return nil }
+        return CGImage(width: side, height: side, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: side * 4,
+                       space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
+                       provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)
     }
 
     private func attach(_ controller: GCController) {

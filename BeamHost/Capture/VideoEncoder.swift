@@ -42,6 +42,7 @@ final class HostVideoEncoder {
         encoder = PhorosMedia.VideoEncoder(configuration: VideoEncoderConfiguration(
             width: width, height: height, frameRate: frameRate,
             bitrateBitsPerSecond: Int(bitrateMbps * 1_000_000), codec: codec,
+            keyframeInterval: Harness.keyframeInterval ?? 2,
             latency: Harness.encoderTuning()
         ))
         encoder.onParameterSets = { [weak self] data, codec in
@@ -115,6 +116,11 @@ final class HostVideoEncoder {
             $0.width = Int32(frameSize.width)
             $0.height = Int32(frameSize.height)
         }
+    }
+
+    /// Live bitrate change for link adaptation: no restart, no keyframe.
+    func setBitrate(_ bitsPerSecond: Int) {
+        encoder.setBitrate(bitsPerSecond)
     }
 
     /// Request that the next encoded frame be a keyframe (IDR). Safe from any thread.

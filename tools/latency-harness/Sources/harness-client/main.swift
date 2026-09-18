@@ -48,7 +48,8 @@ func stderr(_ s: String) { FileHandle.standardError.write((s + "\n").data(using:
 let secret = SharedSecret(hex: "5e1f2a9c4d7b3e6a8f0c1d2e3b4a5968778695a4b3c2d1e0f1e2d3c4b5a69788")!
 let capabilities = ClientCapabilities(deviceName: "Harness", deviceID: "harness-client", audioCodecs: [.pcmFloat32], videoCodecs: [.h264], wantsAudio: false)
 let params = PhorosConnection.parameters()
-let link = PhorosConnection(to: NWEndpoint.hostPort(host: "127.0.0.1", port: 7979), parameters: params)
+let port = NWEndpoint.Port(rawValue: UInt16(ProcessInfo.processInfo.environment["HARNESS_PORT"] ?? "7979") ?? 7979)!
+let link = PhorosConnection(to: NWEndpoint.hostPort(host: "127.0.0.1", port: port), parameters: params)
 
 var authenticated = false
 var assembler = FrameAssembler()
