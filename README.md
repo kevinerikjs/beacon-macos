@@ -1,10 +1,11 @@
 # Beacon
 
-**Beacon turns your Mac's screen into a stream your iPhone can watch.**
+**Beacon turns your Mac's screen into a stream your iPhone can watch and lightly control.**
 
 It is a macOS menu bar app that captures your display and system audio and sends them to the
 [Beam](https://apps.apple.com/us/app/beam-stream-your-screen/id6760154962) iOS app over your local
-network. No cables, no cloud, no account. The video never leaves your network.
+network, or over your own Tailscale network when you are away from home. No cables, no Beam account,
+and no Beam relay.
 
 ### [Download Beacon](https://github.com/kevinerikjs/beacon-macos/releases/latest/download/Beacon.dmg)
 
@@ -26,9 +27,9 @@ people find while searching all point the wrong way:
 
 Beacon plus Beam covers that gap: your Mac's screen and audio, on your phone, over your own WiFi.
 
-Worth being clear about the limit — this is a **viewer, not a remote control**. It shows your Mac
-and plays its audio; it does not send touch or keyboard input back. If you need to actually operate
-the Mac, you want a remote desktop tool instead.
+Beam is viewer-first with light control. From the iPhone you can tap to click, type with the live
+keyboard, and trigger up to eight custom controls configured here in Beacon. It is not a full remote
+desktop: there is no pointer, dragging, file transfer, or clipboard sync.
 
 More detail: [why AirPlay can't do this](https://beamscreen.app/guide/airplay-mac-to-iphone) ·
 [every Mac mirroring path compared](https://beamscreen.app/guide/mac-screen-mirroring) ·
@@ -56,7 +57,7 @@ More detail: [why AirPlay can't do this](https://beamscreen.app/guide/airplay-ma
 | --- | --- |
 | **Capture** | [ScreenCaptureKit](https://developer.apple.com/documentation/screencapturekit) for both display frames and system audio |
 | **Encode** | VideoToolbox, hardware accelerated H.264. Never falls back to software encoding |
-| **Transport** | Network.framework over TCP, on your LAN only |
+| **Transport** | Network.framework over TCP on your LAN or Tailscale network |
 | **Discovery** | Bonjour, advertising `_beam._tcp` |
 | **Pairing** | Device keys held in the macOS Keychain |
 | **Idle cost** | Near zero. No polling and no timers when you are not streaming, just a Bonjour listener |
@@ -68,7 +69,7 @@ in the path between your Mac and your phone.
 
 - macOS 14 Sonoma or later
 - Screen Recording permission, which macOS prompts for on first launch
-- An iPhone on the same network running Beam
+- An iPhone running Beam on the same network, or with Tailscale configured for remote access
 
 ## Building from source
 
@@ -102,7 +103,7 @@ BeamHost/
 ├── Network/
 │   ├── StreamServer.swift   # TCP server, manages client sessions
 │   ├── StreamSession.swift  # Per-client stream session
-│   └── Protocol.swift       # Wire protocol, kept in sync with beam-ios
+│   └── Protocol.swift       # Imports the shared wire contract
 ├── Pairing/
 │   ├── PairingManager.swift
 │   └── KeyStore.swift       # Keychain-stored paired device credentials
@@ -112,9 +113,8 @@ BeamHost/
     └── SettingsView.swift
 ```
 
-`Network/Protocol.swift` is shared in spirit with
-[beam-ios](https://github.com/kevinerikjs/beam-ios). Changing one side without the other will break
-streaming, so protocol changes need to land in both repos together.
+Beacon imports [BeamProtocol](https://github.com/kevinerikjs/beam-protocol) for the shared wire
+contract. The package defines the bytes that Beacon and Beam exchange.
 
 ## Contributing
 
