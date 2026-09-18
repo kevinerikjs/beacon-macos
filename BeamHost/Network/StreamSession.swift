@@ -121,7 +121,8 @@ final class StreamSession {
         case .packet(let packet) where packet.type == .input:
             // Binary, routed by packet type before any JSON decode: at 60 Hz a fall-through
             // to the JSON path would flood the log. Ignored until the client authenticates.
-            guard isAuthenticated, let report = ControllerReport.parse(from: packet.payload) else { return }
+            guard isAuthenticated, ControllerPassthrough.isEnabled,
+                  let report = ControllerReport.parse(from: packet.payload) else { return }
             gamepad.handle(report, connected: packet.flags & ControllerReport.connectedFlag != 0)
         case .packet(let packet):
             handleJSONMessage(packet.payload)
@@ -216,7 +217,7 @@ final class StreamSession {
             supportsAudioToggle: true,
             supportsWindowSelection: true,
             controls: PhoneControlsStore.shared.wireControls(),
-            supportsControllerInput: true
+            supportsControllerInput: ControllerPassthrough.isEnabled
         )
     }
 

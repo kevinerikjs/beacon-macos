@@ -211,6 +211,7 @@ struct GeneralSettingsTab: View {
 
 struct ControlsSettingsTab: View {
     @State private var store = PhoneControlsStore.shared
+    @AppStorage(ControllerPassthrough.defaultsKey) private var controllerPassthroughEnabled = true
     @State private var showingRenameLayout = false
     @State private var showingDeleteLayout = false
     @State private var editingMacro: Macro?
@@ -227,8 +228,16 @@ struct ControlsSettingsTab: View {
 
                 layoutControls
 
-                settingsGroup(header: "Game controller passthrough") {
-                    settingsRow("Appears on the Mac as") {
+                settingsGroup(header: "Game Controller") {
+                    Toggle("Forward the iPhone's game controller to this Mac", isOn: Binding(
+                        get: { ControllerPassthrough.isEnabled },
+                        set: { ControllerPassthrough.isEnabled = $0 }
+                    ))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    Divider().padding(.leading, 12)
+                    settingsRow("Controller Type") {
                         Picker("", selection: Binding(
                             get: { GamepadProfile.selected },
                             set: { GamepadProfile.selected = $0 }
@@ -238,15 +247,14 @@ struct ControlsSettingsTab: View {
                             }
                         }
                         .labelsHidden()
-                        .frame(width: 260)
+                        .fixedSize()
+                        .disabled(!controllerPassthroughEnabled)
                     }
-                    Divider().padding(.leading, 12)
-                    Text("A controller paired to the iPhone plays on this Mac. Xbox or PlayStation lets macOS apply its own button layout. Takes effect on the next connection.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
                 }
+                Text("Games on this Mac see the controller paired to the iPhone. Changes apply to the next connection.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 2)
 
                 let layout = store.activeLayout
                 settingsGroup(header: "Buttons") {

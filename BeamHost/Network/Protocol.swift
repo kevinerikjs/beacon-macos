@@ -67,6 +67,16 @@ extension CMTime {
 
 import PhorosInput
 
+/// Whether Beacon replays the iPhone's game controller at all. On by default.
+enum ControllerPassthrough {
+    static let defaultsKey = "BeaconControllerPassthroughEnabled"
+
+    static var isEnabled: Bool {
+        get { UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: defaultsKey) }
+    }
+}
+
 extension GamepadProfile {
     /// UserDefaults key for the identity Beacon's virtual controller presents.
     static let defaultsKey = "BeaconVirtualControllerProfile"
@@ -81,9 +91,9 @@ extension GamepadProfile {
 
     var displayName: String {
         switch self {
-        case .xboxOne: return "Xbox controller"
-        case .dualShock4: return "PlayStation controller (DualShock 4)"
-        case .generic: return "Generic gamepad"
+        case .xboxOne: return "Xbox"
+        case .dualShock4: return "PlayStation (DualShock 4)"
+        case .generic: return "Generic"
         }
     }
 }
