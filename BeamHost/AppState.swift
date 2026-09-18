@@ -63,6 +63,17 @@ final class AppState {
     var defaultWindow: DefaultWindowPreference? = DefaultWindowPreference.load() {
         didSet { defaultWindow.save() }
     }
+
+    /// When true, "on connect" ignores `defaultWindow` and resumes whatever was captured last
+    /// (window or full display), remembered across restarts (BEAM-42).
+    var resumeLastCapture: Bool = UserDefaults.standard.bool(forKey: "resumeLastCapture") {
+        didSet { UserDefaults.standard.set(resumeLastCapture, forKey: "resumeLastCapture") }
+    }
+
+    /// What was captured most recently: nil = full display. Written on every mode change.
+    var lastCapture: DefaultWindowPreference? = DefaultWindowPreference.load(key: "lastCapture") {
+        didSet { lastCapture.save(key: "lastCapture") }
+    }
     // MARK: - Quality
 
     let qualityManager = VideoQualityManager()
@@ -225,18 +236,29 @@ struct DefaultWindowPreference: Codable, Equatable {
 
     private static let key = "defaultWindowOnConnect"
 
-    static func load() -> DefaultWindowPreference? {
+    static func load(key: String = DefaultWindowPreference.key) -> DefaultWindowPreference? {
         guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
         return try? JSONDecoder().decode(DefaultWindowPreference.self, from: data)
+    }
+
+    init(bundleID: String, appName: String, title: String) {
+        self.bundleID = bundleID
+        self.appName = appName
+        self.title = title
+    }
+
+    init?(window: SCWindow) {
+        guard let app = window.owningApplication, let title = window.title else { return nil }
+        self.init(bundleID: app.bundleIdentifier, appName: app.applicationName, title: title)
     }
 }
 
 extension Optional where Wrapped == DefaultWindowPreference {
-    func save() {
+    func save(key: String = "defaultWindowOnConnect") {
         if let self, let data = try? JSONEncoder().encode(self) {
-            UserDefaults.standard.set(data, forKey: "defaultWindowOnConnect")
+            UserDefaults.standard.set(data, forKey: key)
         } else {
-            UserDefaults.standard.removeObject(forKey: "defaultWindowOnConnect")
+            UserDefaults.standard.removeObject(forKey: key)
         }
     }
 }

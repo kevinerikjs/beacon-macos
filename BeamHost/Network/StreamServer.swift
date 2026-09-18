@@ -466,12 +466,17 @@ final class StreamServer {
         }
 
         let preset = qualityManager.activePreset
-        // No window chosen by a phone yet: apply the Mac's "on connect" preference (BEAM-41).
-        if pendingWindowSelection == nil,
-           let preference = await MainActor.run(body: { appState?.defaultWindow }),
-           let window = await resolveDefaultWindow(preference) {
-            pendingWindowSelection = window
-            await MainActor.run { self.appState?.isWindowMode = true }
+        // No window chosen by a phone yet: apply the Mac's "on connect" preference (BEAM-41),
+        // or the last thing captured when the user asked to resume instead (BEAM-42).
+        if pendingWindowSelection == nil {
+            let (resume, preference, last) = await MainActor.run {
+                (appState?.resumeLastCapture ?? false, appState?.defaultWindow, appState?.lastCapture)
+            }
+            if let target = resume ? last : preference,
+               let window = await resolveDefaultWindow(target) {
+                pendingWindowSelection = window
+                await MainActor.run { self.appState?.isWindowMode = true }
+            }
         }
         let hadPendingWindowSelection = pendingWindowSelection != nil
         let resolvedPendingWindow = await resolvePendingWindowSelection()
@@ -637,6 +642,7 @@ final class StreamServer {
             videoEncoder.reconfigure(frameSize: screenCapture.frameSize(for: targetWindow))
             try await screenCapture.startWindowMode(window: targetWindow)
             pendingWindowSelection = targetWindow
+            await MainActor.run { self.appState?.lastCapture = DefaultWindowPreference(window: targetWindow) }
             if let pendingLockedViewportRect {
                 await applyViewportLock(pendingLockedViewportRect)
             }
@@ -654,6 +660,7 @@ final class StreamServer {
         do {
             videoEncoder.reconfigure(frameSize: screenCapture.frameSize(for: nil))
             try await screenCapture.stopWindowMode(display: display)
+            await MainActor.run { self.appState?.lastCapture = nil }
             await applyViewportLock(pendingLockedViewportRect)
             videoEncoder.requestKeyframe()
             logger.info("Returned to full display mode")

@@ -1289,10 +1289,12 @@ struct DisplaySettingsTab: View {
             }
 
             settingsGroup(header: "On Connect") {
-                settingsRow("Capture") {
+                settingsRow("Default target") {
                     DefaultWindowPicker()
                 }
-                Text("The stream starts on this. Beacon looks for the same window by app and title. If it is closed, Beacon uses another window of that app. If the app has no window, Beacon uses the full display.")
+                Text(appState.resumeLastCapture
+                     ? "No default: the stream starts on whatever was captured last, even after Beacon restarts."
+                     : "The stream starts on this target. Beacon looks for the same window by app and title. If it is closed, Beacon uses another window of that app. If the app has no window, Beacon uses the full display.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1354,6 +1356,11 @@ private struct DefaultWindowPicker: View {
         let title: String
     }
 
+    /// The popup's selection: no default (resume last), the full display, or a window.
+    private enum Selection: Hashable {
+        case noDefault, fullDisplay, window(Choice)
+    }
+
     /// "App" when the title adds nothing, else "App: title" with the title cut to a readable
     /// length. Terminal and browser titles run to a full sentence; the menu is not the place.
     private static func label(for choice: Choice) -> String {
@@ -1378,20 +1385,29 @@ private struct DefaultWindowPicker: View {
         if let stored, !choices.contains(stored) { choices.insert(stored, at: 0) }
         let unique = Array(NSOrderedSet(array: choices)) as! [Choice]
 
-        return Picker("Capture", selection: Binding<Choice?>(
-            get: { stored },
-            set: { choice in
-                appState.defaultWindow = choice.map {
-                    DefaultWindowPreference(bundleID: $0.bundleID, appName: $0.appName, title: $0.title)
+        let current: Selection = appState.resumeLastCapture ? .noDefault : (stored.map { .window($0) } ?? .fullDisplay)
+        return Picker("Default target", selection: Binding<Selection>(
+            get: { current },
+            set: { selection in
+                switch selection {
+                case .noDefault:
+                    appState.resumeLastCapture = true
+                case .fullDisplay:
+                    appState.resumeLastCapture = false
+                    appState.defaultWindow = nil
+                case .window(let choice):
+                    appState.resumeLastCapture = false
+                    appState.defaultWindow = DefaultWindowPreference(bundleID: choice.bundleID, appName: choice.appName, title: choice.title)
                 }
             }
         )) {
-            Text("Full display").tag(Choice?.none)
+            Text("No default (last used)").tag(Selection.noDefault)
+            Text("Full display").tag(Selection.fullDisplay)
             if !unique.isEmpty { Divider() }
             ForEach(unique, id: \.self) { choice in
                 Text(Self.label(for: choice))
                     .lineLimit(1)
-                    .tag(Choice?.some(choice))
+                    .tag(Selection.window(choice))
             }
         }
         .labelsHidden()
