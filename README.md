@@ -28,12 +28,15 @@ people find while searching all point the wrong way:
 Beacon plus Beam covers that gap: your Mac's screen and audio, on your phone, over your own WiFi.
 
 Beam is viewer-first with light control. From the iPhone you can tap to click, type with the live
-keyboard, and trigger up to eight custom controls configured here in Beacon. It is not a full remote
-desktop: there is no pointer, dragging, file transfer, or clipboard sync.
+keyboard, and trigger up to eight custom controls configured here in Beacon. Since 1.5.0 a game
+controller paired with the iPhone or iPad reaches the Mac as an Xbox Wireless Controller (Preferences,
+Controls picks Xbox, PlayStation or Generic), so Mac games play from the phone. It is not a full
+remote desktop: there is no pointer, dragging, file transfer, or clipboard sync.
 
 More detail: [why AirPlay can't do this](https://beamscreen.app/guide/airplay-mac-to-iphone) ·
 [every Mac mirroring path compared](https://beamscreen.app/guide/mac-screen-mirroring) ·
-[setup guide](https://beamscreen.app/guide/mirror-mac-to-iphone)
+[setup guide](https://beamscreen.app/guide/mirror-mac-to-iphone) ·
+[Mac games with a controller](https://beamscreen.app/guide/controller-passthrough)
 
 > **Why the source is here.** Beacon records your screen and your audio, which is about as much
 > trust as you can ask of a piece of software. Rather than ask you to take our word for what it
@@ -57,6 +60,7 @@ More detail: [why AirPlay can't do this](https://beamscreen.app/guide/airplay-ma
 | **Transport** | Network.framework over TCP on your LAN or Tailscale network |
 | **Discovery** | Bonjour, advertising `_beam._tcp` |
 | **Pairing** | Device keys held in the macOS Keychain |
+| **Controller** | `IOHIDUserDevice` virtual gamepad presented as an Xbox Wireless Controller (`PhorosInput.VirtualGamepad`), fed by the phone's `.input` packets |
 | **Idle cost** | Near zero. No polling and no timers when you are not streaming, just a Bonjour listener |
 
 Nothing is uploaded anywhere. There is no telemetry in Beacon, no account system, and no server
