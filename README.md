@@ -44,7 +44,7 @@ More detail: [why AirPlay can't do this](https://beamscreen.app/guide/airplay-ma
 > iPhone-paired game controller into a virtual gamepad on the Mac (`PhorosInput.VirtualGamepad`).
 > Creating that device needs Apple's `com.apple.developer.hid.virtual.device` entitlement, which
 > Apple grants per developer team on request. A build without it still runs and streams; it logs
-> one line per session and drops controller input. The signed DMG above carries the entitlement.
+> one line per session and drops controller input. The signed DMG above (1.5.0 and later) carries the entitlement.
 
 ---
 
