@@ -1,11 +1,12 @@
 // PairingManager.swift
-// Manages the pairing flow: generates codes, validates them, and saves shared secrets.
-// Pairing uses a 6-digit code displayed on macOS that the user enters on iPhone.
-// After pairing, devices share a random 32-byte secret stored in Keychain.
+// Manages the pairing flow: shows the code, checks the client's answer, and saves the
+// shared secret. The protocol side (challenge, verify, secret issue) is
+// PhorosSession.PairingHost; this file is the window, the Keychain and AppState.
 
-import SwiftUI
-import CryptoKit
 import OSLog
+import Phoros
+import PhorosSession
+import SwiftUI
 
 private let logger = Logger(subsystem: "com.beam.beacon", category: "PairingManager")
 
@@ -22,9 +23,7 @@ final class PairingManager {
     /// Whether a pairing session is in progress.
     var isPairingActive: Bool = false
 
-    // Pending pairing session
-    private var pendingDeviceID: String?
-    private var pendingDeviceName: String?
+    private var pairing: PairingHost?
     private var pendingSession: StreamSession?
     private var codeExpiryTask: Task<Void, Never>?
 
@@ -34,36 +33,24 @@ final class PairingManager {
 
     /// Called when an iPhone sends a "hello" message requesting pairing.
     func beginPairing(deviceID: String, deviceName: String, session: StreamSession) {
-        // Cancel any existing pairing attempt
         cancelPairing()
 
-        pendingDeviceID = deviceID
-        pendingDeviceName = deviceName
+        var host = PairingHost(capabilities: StreamSession.hostCapabilities())
+        let hello = PairingMessage(type: .hello, deviceName: deviceName, deviceID: deviceID)
+        guard let (challenge, code) = host.begin(hello: hello) else { return }
+        pairing = host
         pendingSession = session
-
-        // Generate 6-digit code
-        let code = String(format: "%06d", Int.random(in: 0..<1_000_000))
         currentCode = code
         isPairingActive = true
 
-        // Send challenge to iPhone so it knows a code has been issued
-        let challenge = BeamPairingMessage(
-            type: .challenge,
-            deviceName: Host.current().localizedName,
-            deviceID: nil,
-            code: nil,  // Don't send the code over the wire - user types it manually
-            sharedSecret: nil,
-            error: nil
-        )
+        // The code goes through the person, never over the wire.
         session.sendPairingResponse(challenge)
 
-        // Show pairing window on macOS
         Task { @MainActor in
             PairingWindowController.shared.showWindow(nil)
             NSApp.activate(ignoringOtherApps: true)
         }
 
-        // Auto-expire after 5 minutes
         codeExpiryTask = Task {
             try? await Task.sleep(for: .seconds(300))
             if !Task.isCancelled { await self.expirePairing() }
@@ -74,65 +61,34 @@ final class PairingManager {
 
     // MARK: - Verify Code
 
-    /// Called when the iPhone sends back the code the user entered on macOS.
+    /// Called when the iPhone sends back the code the user entered.
     func verifyCode(_ code: String) {
-        guard isPairingActive,
-              let expectedCode = currentCode,
-              let deviceID = pendingDeviceID,
-              let deviceName = pendingDeviceName,
-              let session = pendingSession else {
+        guard var host = pairing, let session = pendingSession,
+              let deviceID = host.peerDeviceID, let deviceName = host.peerDeviceName else {
             logger.warning("verifyCode called with no active pairing session")
             return
         }
 
-        guard code == expectedCode else {
-            logger.warning("Pairing code mismatch: expected \(expectedCode), got \(code)")
-            let failMsg = BeamPairingMessage(
-                type: .pairFailed, deviceName: nil, deviceID: nil,
-                code: nil, sharedSecret: nil, error: "Incorrect code"
-            )
-            session.sendPairingResponse(failMsg)
-            return
+        let outcome = host.verify(PairingMessage(type: .codeVerify, deviceID: deviceID, code: code))
+        pairing = host
+
+        switch outcome {
+        case .ignored:
+            logger.warning("Code arrived for an expired pairing attempt")
+        case .rejected(let reply):
+            logger.warning("Pairing code mismatch for '\(deviceName)'")
+            session.sendPairingResponse(reply)
+        case .paired(let secret, let reply):
+            KeyStore.shared.addPairedDevice(PairedDevice(
+                id: deviceID, name: deviceName, sharedSecret: secret.bytes, lastSeen: Date()
+            ))
+            Task { @MainActor in
+                AppState.shared?.pairedDevices = KeyStore.shared.loadPairedDevices()
+            }
+            session.sendPairingResponse(reply)
+            logger.info("Pairing complete for '\(deviceName)' (id: \(deviceID))")
+            cancelPairing()
         }
-
-        // Generate shared secret
-        let secretBytes = SymmetricKey(size: .bits256)
-        let secretData = secretBytes.withUnsafeBytes { Data($0) }
-        let secretHex = secretData.map { String(format: "%02x", $0) }.joined()
-
-        // Save to Keychain
-        let device = PairedDevice(
-            id: deviceID,
-            name: deviceName,
-            sharedSecret: secretData,
-            lastSeen: Date()
-        )
-        KeyStore.shared.addPairedDevice(device)
-
-        // Update AppState
-        Task { @MainActor in
-            AppState.shared?.pairedDevices = KeyStore.shared.loadPairedDevices()
-        }
-
-        // Send success to iPhone with the shared secret
-        let successMsg = BeamPairingMessage(
-            type: .pairSuccess,
-            deviceName: Host.current().localizedName,
-            deviceID: nil,
-            code: nil,
-            sharedSecret: secretHex,
-            error: nil,
-            // Hand the phone our tailnet address at pair time so away-from-home streaming
-            // works later without the user configuring anything (BEAM-19). nil when this Mac
-            // has no Tailscale — the phone then simply has no remote fallback.
-            tailscaleHosts: TailscaleAddress.advertisedHosts(),
-            supportsRemoteAccess: true,
-            supportsVideoHold: true
-        )
-        session.sendPairingResponse(successMsg)
-
-        logger.info("Pairing complete for '\(deviceName)' (id: \(deviceID))")
-        cancelPairing()
     }
 
     // MARK: - Cancel / Expire
@@ -141,10 +97,8 @@ final class PairingManager {
         codeExpiryTask?.cancel()
         codeExpiryTask = nil
         currentCode = nil
-
         isPairingActive = false
-        pendingDeviceID = nil
-        pendingDeviceName = nil
+        pairing = nil
         pendingSession = nil
 
         Task { @MainActor in

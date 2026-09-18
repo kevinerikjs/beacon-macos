@@ -3,6 +3,8 @@
 // Each connected client gets its own StreamSession.
 
 import Network
+import Phoros
+import Phoros
 import ScreenCaptureKit
 import OSLog
 
@@ -24,15 +26,15 @@ final class StreamServer {
 
     /// Most-recent parameter-set blob, sent immediately to each newly-authenticated session.
     private var cachedSpsPps: Data? = nil
-    /// Codec the `cachedSpsPps` blob belongs to. Sent as the .spsPps packet's codec flag so the
+    /// Codec the `cachedSpsPps` blob belongs to. Sent as the .parameterSets packet's codec flag so the
     /// receiver builds the matching (H.264 vs HEVC) format description. Kept beside the blob so
     /// an immediate resend can never label a cached blob with the wrong codec.
-    private var cachedVideoCodec: BeamVideoCodec = .h264
+    private var cachedVideoCodec: VideoCodecID = .h264
 
     // Pipeline components (shared across sessions; one capture, multiple outputs)
     private let screenCapture: ScreenCapture
-    private let videoEncoder: VideoEncoder
-    private let audioEncoder: AudioEncoder
+    private let videoEncoder: HostVideoEncoder
+    private let audioEncoder: HostAudioEncoder
     private let qualityManager: VideoQualityManager
 
     private var captureStarted = false
@@ -74,8 +76,8 @@ final class StreamServer {
     /// NAL stream, so HEVC is only safe when the host can encode it AND every connected client
     /// negotiated it — a single H.264-only client drops the whole stream back to H.264. No live
     /// sessions ⇒ H.264, the permanent default.
-    private func desiredVideoCodec() -> BeamVideoCodec {
-        guard VideoEncoder.isHEVCEncodeSupported else { return .h264 }
+    private func desiredVideoCodec() -> VideoCodecID {
+        guard HostVideoEncoder.isHEVCEncodeSupported else { return .h264 }
         return sessionsQueue.sync {
             guard !activeSessions.isEmpty else { return .h264 }
             return activeSessions.values.allSatisfy { $0.negotiatedVideoCodec == .hevc } ? .hevc : .h264
@@ -109,13 +111,13 @@ final class StreamServer {
 
         // Init encoder with quality manager's initial preset
         let preset = qualityManager.activePreset
-        videoEncoder = VideoEncoder(
+        videoEncoder = HostVideoEncoder(
             width: Int32(preset.width),
             height: Int32(preset.height),
-            frameRate: preset.fps,
+            frameRate: preset.frameRate,
             bitrateMbps: preset.bitrateMbps
         )
-        audioEncoder = AudioEncoder()
+        audioEncoder = HostAudioEncoder()
         screenCapture = ScreenCapture()
 
         videoEncoder.delegate = self
@@ -218,7 +220,7 @@ final class StreamServer {
         // a fresh AAC session is already being encoded.
         refreshAACOutputEnabled()
         audioEncoder.setAACBitrate(
-            BeamAudioCodec.aacBitrate(
+            AudioCodecID.aacBitrate(
                 for: qualityManager.activePreset,
                 channels: currentAudioFormat?.channels ?? 2
             )
@@ -335,7 +337,7 @@ final class StreamServer {
         screenCapture.setRequestedAudioSampleRate(rate)
     }
 
-    func handleQualityRequest(_ preset: StreamQualityPreset) {
+    func handleQualityRequest(_ preset: QualityPreset) {
         qualityManager.handleQualityRequest(preset)
     }
 
@@ -357,7 +359,7 @@ final class StreamServer {
         logger.info("Video hold released — restated parameter sets and requested a keyframe")
     }
 
-    func handleViewportLockRequest(_ payload: BeamViewportLockPayload) {
+    func handleViewportLockRequest(_ payload: ViewportLock) {
         if payload.locked {
             pendingLockedViewportRect = CGRect(x: payload.x, y: payload.y, width: payload.width, height: payload.height)
         } else {
@@ -382,7 +384,7 @@ final class StreamServer {
         videoEncoder.requestKeyframe()
     }
 
-    func broadcastQualityChanged(_ preset: StreamQualityPreset) {
+    func broadcastQualityChanged(_ preset: QualityPreset) {
         let sessions = sessionsQueue.sync { Array(activeSessions.values) }
         sessions.forEach { $0.sendQualityChanged(preset) }
         logger.info("Quality broadcast → \(preset.rawValue)")
@@ -394,14 +396,14 @@ final class StreamServer {
         logger.info("Audio format broadcast → \(sampleRate, format: .fixed(precision: 0)) Hz, \(channels)ch")
     }
 
-    private func applyQualityPreset(_ preset: StreamQualityPreset) {
+    private func applyQualityPreset(_ preset: QualityPreset) {
         // Keep the window's aspect across quality changes (BEAM-38).
         videoEncoder.reconfigure(preset: preset, frameSize: screenCapture.frameSize(for: pendingWindowSelection, preset: preset, lock: screenCapture.sourceLockedViewport))
         // The preset is the only signal the host has for "constrained link", and the auto
         // tiering drives it down on exactly those links. Bitrate is settable live, so this
         // neither tears down the converter nor re-anchors the PTS clock.
         audioEncoder.setAACBitrate(
-            BeamAudioCodec.aacBitrate(for: preset, channels: currentAudioFormat?.channels ?? 2)
+            AudioCodecID.aacBitrate(for: preset, channels: currentAudioFormat?.channels ?? 2)
         )
         Task {
             try? await screenCapture.updateConfiguration(preset: preset)
@@ -485,7 +487,7 @@ final class StreamServer {
                 display: display,
                 width: preset.width,
                 height: preset.height,
-                frameRate: preset.fps,
+                frameRate: preset.frameRate,
                 initialWindow: resolvedPendingWindow,
                 initialLockedViewport: pendingLockedViewportRect
             )
@@ -570,11 +572,11 @@ final class StreamServer {
     // MARK: - Window Streaming
 
     /// What the host is capturing right now, as the clients should see it (BEAM-35).
-    private func currentCaptureMode() -> BeamCaptureModePayload {
+    private func currentCaptureMode() -> CaptureMode {
         guard let window = pendingWindowSelection else {
-            return BeamCaptureModePayload(windowMode: false, windowID: nil, title: nil, app: nil)
+            return CaptureMode(windowMode: false, windowID: nil, title: nil, app: nil)
         }
-        return BeamCaptureModePayload(
+        return CaptureMode(
             windowMode: true,
             windowID: window.windowID,
             title: window.title ?? "",
@@ -596,13 +598,13 @@ final class StreamServer {
         Task {
             let windows = await ScreenCapture.availableWindows()
             let ownBundle = Bundle.main.bundleIdentifier
-            let infos = windows.compactMap { window -> BeamWindowInfo? in
+            let infos = windows.compactMap { window -> WindowInfo? in
                 guard window.windowLayer == 0,
                       let app = window.owningApplication,
                       app.bundleIdentifier != ownBundle,
                       let title = window.title, !title.isEmpty
                 else { return nil }
-                return BeamWindowInfo(id: window.windowID, title: title, app: app.applicationName)
+                return WindowInfo(id: window.windowID, title: title, app: app.applicationName)
             }
             .sorted { ($0.app.lowercased(), $0.title.lowercased()) < ($1.app.lowercased(), $1.title.lowercased()) }
             session.sendWindowList(infos)
@@ -768,15 +770,15 @@ extension StreamServer: ScreenCaptureDelegate {
     }
 }
 
-// MARK: - VideoEncoderDelegate
+// MARK: - HostVideoEncoderDelegate
 
-extension StreamServer: VideoEncoderDelegate {
-    func videoEncoder(_ encoder: VideoEncoder, didEncodeFrame data: Data, presentationTime: CMTime, isKeyframe: Bool) {
+extension StreamServer: HostVideoEncoderDelegate {
+    func videoEncoder(_ encoder: HostVideoEncoder, didEncodeFrame data: Data, presentationTime: CMTime, isKeyframe: Bool) {
         let sessions = sessionsQueue.sync { Array(activeSessions.values) }
         sessions.forEach { $0.send(videoData: data, pts: presentationTime, isKeyframe: isKeyframe) }
     }
 
-    func videoEncoder(_ encoder: VideoEncoder, didEncodeParameterSets data: Data, codec: BeamVideoCodec) {
+    func videoEncoder(_ encoder: HostVideoEncoder, didEncodeParameterSets data: Data, codec: VideoCodecID) {
         cachedSpsPps = data
         cachedVideoCodec = codec
         let sessions = sessionsQueue.sync { Array(activeSessions.values) }
@@ -784,29 +786,29 @@ extension StreamServer: VideoEncoderDelegate {
     }
 }
 
-// MARK: - AudioEncoderDelegate
+// MARK: - HostAudioEncoderDelegate
 
-extension StreamServer: AudioEncoderDelegate {
-    func audioEncoder(_ encoder: AudioEncoder, didProducePCMChunk data: Data, presentationTime: CMTime) {
+extension StreamServer: HostAudioEncoderDelegate {
+    func audioEncoder(_ encoder: HostAudioEncoder, didProducePCMChunk data: Data, presentationTime: CMTime) {
         let sessions = sessionsQueue.sync {
             activeSessions.values.filter { $0.wantsAudio && $0.negotiatedAudioCodec == .pcmFloat32 }
         }
         sessions.forEach { $0.send(audioData: data, codec: .pcmFloat32, pts: presentationTime) }
     }
 
-    func audioEncoder(_ encoder: AudioEncoder, didProduceAACChunk data: Data, presentationTime: CMTime) {
+    func audioEncoder(_ encoder: HostAudioEncoder, didProduceAACChunk data: Data, presentationTime: CMTime) {
         let sessions = sessionsQueue.sync {
             activeSessions.values.filter { $0.wantsAudio && $0.negotiatedAudioCodec == .aacLC }
         }
         sessions.forEach { $0.send(audioData: data, codec: .aacLC, pts: presentationTime) }
     }
 
-    func audioEncoder(_ encoder: AudioEncoder, didUpdateSampleRate sampleRate: Double, channels: Int) {
+    func audioEncoder(_ encoder: HostAudioEncoder, didUpdateSampleRate sampleRate: Double, channels: Int) {
         currentAudioFormat = (sampleRate: sampleRate, channels: channels)
         broadcastAudioFormatChanged(sampleRate: sampleRate, channels: channels)
         // Channel count feeds the bitrate table (mono is halved).
         audioEncoder.setAACBitrate(
-            BeamAudioCodec.aacBitrate(for: qualityManager.activePreset, channels: channels)
+            AudioCodecID.aacBitrate(for: qualityManager.activePreset, channels: channels)
         )
     }
 }

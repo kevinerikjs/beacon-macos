@@ -113,8 +113,11 @@ BeamHost/
     └── SettingsView.swift
 ```
 
-Beacon imports [BeamProtocol](https://github.com/kevinerikjs/beam-protocol) for the shared wire
-contract. The package defines the bytes that Beacon and Beam exchange.
+Beacon is built on [Phoros](https://github.com/kevinerikjs/phoros): the wire contract it shares
+with Beam, plus the session logic (auth, send scheduling, video hold, quality adaptation), the
+framed TCP connection, and the VideoToolbox and AAC encoders. What lives in this repo is Beacon
+itself: screen capture, the menu bar, pairing UI, the Keychain, and the policy on top of the
+package (`BeamHost/Network/Protocol.swift`, `HostVideoEncoder`, `HostAudioEncoder`).
 
 ## Contributing
 

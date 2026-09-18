@@ -1,6 +1,7 @@
 // Phone-control layouts and reusable macros for the iPhone remote.
 
 import Carbon.HIToolbox
+import Phoros
 import Foundation
 import Observation
 
@@ -115,7 +116,7 @@ enum PhoneControlAction: Codable, Equatable {
         }
     }
 
-    /// What the phone is told about the button (BeamPhoneControl.mode).
+    /// What the phone is told about the button (ControlButton.mode).
     var wireMode: String {
         switch self {
         case .textInput: return "text"
@@ -312,9 +313,9 @@ final class PhoneControlsStore {
         return activeLayout.buttons.first(where: { $0.id == buttonID })?.action
     }
 
-    func wireControls() -> [BeamPhoneControl] {
+    func wireControls() -> [ControlButton] {
         activeLayout.buttons.map { button in
-            var control = BeamPhoneControl(
+            var control = ControlButton(
                 id: button.id.uuidString,
                 symbol: button.symbol,
                 label: button.label,

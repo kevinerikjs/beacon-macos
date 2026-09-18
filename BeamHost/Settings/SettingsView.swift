@@ -2,6 +2,7 @@
 // Preferences window for Beacon.
 
 import SwiftUI
+import Phoros
 import Carbon.HIToolbox
 import ScreenCaptureKit
 import ServiceManagement
@@ -1308,7 +1309,7 @@ struct DisplaySettingsTab: View {
                         get: { appState.qualityManager.preferredPreset },
                         set: { appState.qualityManager.preferredPreset = $0 }
                     )) {
-                        ForEach(StreamQualityPreset.allCases) { preset in
+                        ForEach(QualityPreset.allCases) { preset in
                             Text(preset.displayName).tag(preset)
                         }
                     }
@@ -1325,7 +1326,7 @@ struct DisplaySettingsTab: View {
                         .padding(.bottom, 8)
                 } else {
                     let p = appState.qualityManager.preferredPreset
-                    Text("\(p.width)×\(p.height) · \(Int(p.fps)) fps · \(String(format: "%.1f", p.bitrateMbps)) Mbps")
+                    Text("\(p.width)×\(p.height) · \(Int(p.frameRate)) fps · \(String(format: "%.1f", p.bitrateMbps)) Mbps")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)

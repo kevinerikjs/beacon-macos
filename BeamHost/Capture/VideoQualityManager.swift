@@ -3,6 +3,8 @@
 // Auto mode: adapts based on quality feedback from iOS. Manual: holds preset.
 
 import Foundation
+import Phoros
+import PhorosSession
 import OSLog
 
 private let logger = Logger(subsystem: "com.beam.beacon", category: "VideoQualityManager")
@@ -12,7 +14,7 @@ final class VideoQualityManager {
 
     // MARK: - Preference (macOS default, persisted)
 
-    var preferredPreset: StreamQualityPreset {
+    var preferredPreset: QualityPreset {
         didSet {
             UserDefaults.standard.set(preferredPreset.rawValue, forKey: "streamQualityPreset")
             if !hasActiveOverride { resolveAndApply(from: preferredPreset) }
@@ -22,40 +24,30 @@ final class VideoQualityManager {
     // MARK: - Active State
 
     /// Currently active (resolved) preset — never .auto.
-    private(set) var activePreset: StreamQualityPreset = .p1080_30
+    private(set) var activePreset: QualityPreset = .p1080_30
 
     /// True when the connected iOS client has overridden the macOS default for this session.
     private var hasActiveOverride = false
 
     // MARK: - Callback
 
-    var onPresetChanged: ((StreamQualityPreset) -> Void)?
+    var onPresetChanged: ((QualityPreset) -> Void)?
 
     // MARK: - Auto Adaptation
 
-    private static let tiers = StreamQualityPreset.autoTiers
-    private var tierIndex: Int = StreamQualityPreset.autoTiers.count - 1  // start at top tier
-
-    private var lastChangeTime: Date = .distantPast
-    private var sustainedLowStart: Date?
-    private var sustainedHighStart: Date?
-    private var latestQuality: Double = 1.0
+    /// Feedback-driven tier selection with hysteresis lives in PhorosSession; the ladder
+    /// (which presets, in which order) is Beacon's policy.
+    private var ladder = QualityLadder(tiers: QualityPreset.autoTiers)
     private var autoTimer: DispatchSourceTimer?
-
-    private static let stepDownThreshold: Double  = 0.45
-    private static let stepUpThreshold: Double    = 0.80
-    private static let sustainedLowSecs: TimeInterval  = 3.0
-    private static let sustainedHighSecs: TimeInterval = 12.0
-    private static let minChangeInterval: TimeInterval = 6.0
 
     // MARK: - Init
 
     init() {
         let saved = UserDefaults.standard.string(forKey: "streamQualityPreset") ?? ""
-        preferredPreset = StreamQualityPreset(rawValue: saved) ?? .auto
-        let initial = preferredPreset == .auto ? Self.tiers.last! : preferredPreset
+        preferredPreset = QualityPreset(rawValue: saved) ?? .auto
+        let initial = preferredPreset == .auto ? QualityPreset.autoTiers.last! : preferredPreset
         activePreset = initial
-        tierIndex = Self.tiers.firstIndex(of: initial) ?? Self.tiers.count - 1
+        ladder.set(initial)
     }
 
     // MARK: - Session Lifecycle
@@ -68,21 +60,19 @@ final class VideoQualityManager {
     func sessionEnded() {
         stopAutoTimer()
         hasActiveOverride = false
-        sustainedLowStart = nil
-        sustainedHighStart = nil
     }
 
     // MARK: - iOS Input
 
     func receiveQualityFeedback(_ quality: Double) {
-        latestQuality = quality
+        ladder.feedback(quality)
     }
 
-    func handleQualityRequest(_ preset: StreamQualityPreset) {
+    func handleQualityRequest(_ preset: QualityPreset) {
         hasActiveOverride = true
         if preset == .auto {
             startAutoTimer()
-            apply(Self.tiers[tierIndex])
+            apply(ladder.current)
         } else {
             stopAutoTimer()
             apply(preset)
@@ -109,60 +99,27 @@ final class VideoQualityManager {
     // MARK: - Evaluation
 
     private func evaluate() {
-        let q = latestQuality
-        let now = Date()
-
-        if q < Self.stepDownThreshold {
-            sustainedHighStart = nil
-            if sustainedLowStart == nil { sustainedLowStart = now }
-            if let s = sustainedLowStart,
-               now.timeIntervalSince(s) >= Self.sustainedLowSecs,
-               now.timeIntervalSince(lastChangeTime) >= Self.minChangeInterval { stepDown() }
-        } else if q > Self.stepUpThreshold {
-            sustainedLowStart = nil
-            if sustainedHighStart == nil { sustainedHighStart = now }
-            if let s = sustainedHighStart,
-               now.timeIntervalSince(s) >= Self.sustainedHighSecs,
-               now.timeIntervalSince(lastChangeTime) >= Self.minChangeInterval { stepUp() }
-        } else {
-            sustainedLowStart = nil
-            sustainedHighStart = nil
-        }
-    }
-
-    private func stepDown() {
-        guard tierIndex > 0 else { return }
-        tierIndex -= 1
-        let p = Self.tiers[tierIndex]
-        logger.info("Auto ▼ \(p.rawValue)")
-        apply(p); sustainedLowStart = nil
-    }
-
-    private func stepUp() {
-        guard tierIndex < Self.tiers.count - 1 else { return }
-        tierIndex += 1
-        let p = Self.tiers[tierIndex]
-        logger.info("Auto ▲ \(p.rawValue)")
-        apply(p); sustainedHighStart = nil
+        guard let next = ladder.evaluate() else { return }
+        logger.info("Auto \(next.rawValue)")
+        apply(next)
     }
 
     // MARK: - Helpers
 
-    private func resolveAndApply(from preset: StreamQualityPreset) {
+    private func resolveAndApply(from preset: QualityPreset) {
         if preset == .auto {
             startAutoTimer()
-            apply(Self.tiers[tierIndex])
+            apply(ladder.current)
         } else {
             stopAutoTimer()
             apply(preset)
         }
     }
 
-    private func apply(_ preset: StreamQualityPreset) {
+    private func apply(_ preset: QualityPreset) {
         guard preset != activePreset else { return }
-        lastChangeTime = Date()
         activePreset = preset
-        if let idx = Self.tiers.firstIndex(of: preset) { tierIndex = idx }
+        ladder.set(preset)
         onPresetChanged?(preset)
     }
 }

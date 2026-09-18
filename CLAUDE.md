@@ -37,13 +37,13 @@ beam-macos/
 │   │   └── StatusItemView.swift     # Menu bar dropdown UI
 │   ├── Capture/
 │   │   ├── ScreenCapture.swift      # ScreenCaptureKit wrapper
-│   │   ├── VideoEncoder.swift       # VideoToolbox H.264/H.265
-│   │   └── AudioEncoder.swift       # AAC encoding
+│   │   ├── VideoEncoder.swift       # HostVideoEncoder: Beacon policy over PhorosMedia.VideoEncoder
+│   │   └── AudioEncoder.swift       # HostAudioEncoder: PCM + AAC via PhorosMedia, retry policy
 │   ├── Network/
 │   │   ├── BonjourAdvertiser.swift   # Advertise _beam._tcp service
 │   │   ├── StreamServer.swift       # Accept connections, send stream
 │   │   ├── ControlChannel.swift     # TCP control messages (media keys, etc.)
-│   │   └── Protocol.swift           # Shared message definitions
+│   │   └── Protocol.swift           # Beacon policy on top of the Phoros wire contract
 │   ├── Pairing/
 │   │   ├── PairingManager.swift     # Handle pairing flow
 │   │   ├── QRCodeGenerator.swift    # Generate pairing QR code

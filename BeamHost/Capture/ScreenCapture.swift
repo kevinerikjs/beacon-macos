@@ -3,6 +3,7 @@
 // Uses SCStream for hardware-accelerated capture.
 
 import ScreenCaptureKit
+import Phoros
 import CoreMedia
 import CoreVideo
 import OSLog
@@ -47,7 +48,7 @@ final class ScreenCapture: NSObject {
     /// long edge caps the frame's long edge; the other side follows the source aspect. Both are
     /// rounded to multiples of 16 for the encoder. Full display keeps the preset size verbatim
     /// so nothing changes for the common case.
-    func frameSize(for window: SCWindow?, preset: StreamQualityPreset? = nil, lock: CGRect? = nil) -> CGSize {
+    func frameSize(for window: SCWindow?, preset: QualityPreset? = nil, lock: CGRect? = nil) -> CGSize {
         let pw = preset?.width ?? presetWidth
         let ph = preset?.height ?? presetHeight
         let source: CGSize
@@ -205,14 +206,14 @@ final class ScreenCapture: NSObject {
     }
 
     /// Update stream resolution and frame rate without restarting the stream.
-    func updateConfiguration(preset: StreamQualityPreset) async throws {
+    func updateConfiguration(preset: QualityPreset) async throws {
         guard let stream else { return }
         presetWidth = preset.width
         presetHeight = preset.height
-        currentFrameRate = preset.fps
+        currentFrameRate = preset.frameRate
         applyFrameSize(frameSize(for: currentWindow, lock: sourceLockedViewport))
         try await stream.updateConfiguration(makeConfiguration(captureAudio: true))
-        logger.info("ScreenCapture updated → \(self.currentWidth)x\(self.currentHeight) @\(Int(preset.fps))fps")
+        logger.info("ScreenCapture updated → \(self.currentWidth)x\(self.currentHeight) @\(Int(preset.frameRate))fps")
     }
 
     /// Switch to capturing a specific window. Call after start().

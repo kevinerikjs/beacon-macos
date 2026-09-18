@@ -1,26 +1,31 @@
 // StreamSession.swift
 // Represents one connected Beam client (iPhone).
-// Handles pairing/authentication handshake over TCP, then sends video/audio data.
+// Handles the pairing/authentication handshake over TCP, then sends video/audio data.
+//
+// The transport is PhorosNetwork.PhorosConnection. Authentication, send scheduling,
+// video hold and heartbeat policy come from PhorosSession. What stays here is Beacon
+// glue: KeyStore lookup, the force-PCM escape hatch, the preferred audio sample rate,
+// and forwarding to StreamServer.
 
-import Network
 import CoreMedia
-import CryptoKit
+import Foundation
+import Network
 import OSLog
+import Phoros
+import PhorosNetwork
+import PhorosSession
 
 private let logger = Logger(subsystem: "com.beam.beacon", category: "StreamSession")
 
-/// Max UDP payload size (safe for most networks; keeps under typical MTU of 1500)
-private let kMaxUDPPayload = 1400
+/// Largest media payload we put in one packet. Under a typical 1500-byte MTU.
+private let kMaxMediaPayload = 1400
 
 final class StreamSession {
 
     let id: String = UUID().uuidString
 
-    private let connection: NWConnection
+    private let link: PhorosConnection
     private weak var server: StreamServer?
-
-    private var udpConnection: NWConnection?
-    private var clientUDPEndpoint: NWEndpoint?
 
     private var isAuthenticated = false
 
@@ -28,117 +33,61 @@ final class StreamSession {
     /// ever raised by an explicit advertisement in this connection's authRequest. It is a
     /// per-connection property: never derived from a prior connection, a stored capability,
     /// or the paired-device record.
-    private(set) var negotiatedAudioCodec: BeamAudioCodec = .pcmFloat32
+    private(set) var negotiatedAudioCodec: AudioCodecID = .pcmFloat32
     /// The video codec this client can decode, resolved at auth. HEVC only if the client
     /// advertised it, else H.264. The shared encoder aggregates this across all sessions
     /// (see StreamServer.desiredVideoCodec), so it is a capability, not a guarantee.
-    private(set) var negotiatedVideoCodec: BeamVideoCodec = .h264
+    private(set) var negotiatedVideoCodec: VideoCodecID = .h264
     /// Whether this client wants audio at all (BEAM-34). Set from `wantsAudio` at auth and
     /// flipped by `audio_enable_request` mid-session. Per-connection, like the codecs.
     private(set) var wantsAudio = true
 
-    private var sharedSecret: SymmetricKey?
     private(set) var authenticatedDeviceID: String?
     private var isTerminated = false
 
-    // Sequence tracking
     private var videoFrameNumber: UInt32 = 0
     private var audioSequenceNumber: UInt32 = 0
 
-    private let sendQueue = DispatchQueue(label: "com.beam.session.send", qos: .userInteractive)
-
-    // MARK: - Send backpressure (BEAM-21)
+    // MARK: - Send scheduling
     //
-    // All media travels over the TCP control connection (see sendUDP, a misnomer). On a LAN
-    // that is harmless because bandwidth vastly exceeds bitrate. Over a constrained link —
-    // cellular, or a DERP-relayed tailnet — it is fatal: TCP never drops, so once the encoder
-    // outpaces the link every frame is queued rather than discarded. Latency then grows
-    // without bound and NEVER recovers, because the backlog has to be drained before anything
-    // current is displayed. That is the "2 fps from 10 seconds ago" failure, and it is also
-    // why lowering the quality preset didn't help — a lower bitrate doesn't drain a backlog
-    // that has already formed.
-    //
-    // Live video must drop late frames rather than buffer them. We track bytes handed to the
-    // Network framework but not yet written, and once that exceeds roughly a second of the
-    // current bitrate we discard non-keyframe video instead of enqueueing it.
-    //
-    // ACCOUNTING (BEAM-24): the counters below are mutated from at least three threads — the
-    // VideoToolbox output callback (video sends), AudioEncoder.encoderQueue (audio sends) and
-    // sendQueue (send completions). The old code asserted they all ran on sendQueue and used a
-    // bare `+=`; they do not, and a lost decrement permanently inflated the backlog, which with
-    // the old shared-counter gate meant audio was switched off for the rest of the session.
-    // Every read and write now goes through `backlogLock`, and the counters are re-anchored to
-    // zero whenever nothing is outstanding so drift can never accumulate.
-    private let backlogLock = NSLock()
-    private var inFlightBytes = 0        // total (video + audio + control), guarded
-    private var inFlightAudioBytes = 0   // audio only, guarded
-    private var outstandingSends = 0     // guarded
-    private var droppedFrames = 0
-    private var lastDropLogAt = Date.distantPast
-    /// Wall-clock time of the last audio chunk actually handed to the connection. Audio must
-    /// never be silent for longer than `maxAudioDropWindow` while the encoder is producing,
-    /// no matter what the backlog counters say — see `send(audioData:codec:pts:)`.
-    private var lastAudioSentAt = Date.distantPast
-    private let maxAudioDropWindow: TimeInterval = 1.0
-
-    /// Backlog above which non-keyframe video is dropped. ~192 KB is about a second at
-    /// 1.5 Mbps and a quarter-second at 6 Mbps, so it stays small enough to keep latency
-    /// bounded without dropping on brief, normal bursts.
-    private let maxQueuedMediaBytes = 192 * 1024
-
-    /// Audio gets its own, higher ceiling and is checked separately.
-    ///
-    /// HISTORY (BEAM-21): audio used to be uncompressed Float32 stereo PCM — 44100 x 2ch x 4B =
-    /// 352,800 B/s = 2.82 Mbps, constant and completely independent of the video preset. At
-    /// 360p30 that was 65% of everything we sent. Because sendTCP counts every byte but only
-    /// video consulted the counter, 0.56s of PCM was enough to pin inFlightBytes above the
-    /// video threshold permanently: every delta frame was dropped for the rest of the session
-    /// while forced IDRs kept flowing — the 2 fps keyframe slideshow.
-    ///
-    /// Clients that advertise AAC-LC now get ~128 kbps instead, so audio is a few percent of
-    /// the link rather than the majority of it. That also means this ceiling is ~17 s of AAC
-    /// rather than 0.8 s of PCM, i.e. AAC sessions effectively never shed audio — which is
-    /// correct at that share of the link. Legacy PCM sessions keep the old behaviour.
-    ///
-    /// BEAM-24: that reasoning was only ever true against an AUDIO-ONLY counter, and this
-    /// ceiling used to be checked against the SHARED one, which is ~97% video bytes. Video's
-    /// own drop gate is a control loop whose set point is `maxQueuedMediaBytes` (192 KB), so on
-    /// any link that cannot absorb the encoder instantly the shared counter parks at ~192 KB —
-    /// three times this ceiling. Audio was then dropped on every single call, indefinitely,
-    /// while video kept flowing: total silence with perfect video, recovered only by a
-    /// reconnect. This is now compared against `inFlightAudioBytes` only.
-    private var maxQueuedAudioBytes: Int {
-        negotiatedAudioCodec == .aacLC ? 64 * 1024 : 288 * 1024
-    }
-    private var droppedAudioChunks = 0
+    // Everything travels over the one TCP connection. On a constrained link TCP never drops,
+    // so once the encoder outpaces the link every frame queues and latency grows without
+    // bound (BEAM-21). SendScheduler drops late video, keeps audio ahead of video (BEAM-31),
+    // sheds audio only on its own backlog and never for long (BEAM-24), and re-anchors its
+    // counters whenever the connection drains so an accounting slip can never silence a
+    // stream. All access is serialised on `stateQueue`.
+    private var scheduler = SendScheduler()
+    private var hold = VideoHold()
+    private var heartbeat = HeartbeatMonitor()
     private var heartbeatTimer: DispatchSourceTimer?
-    private var lastPongReceivedAt = Date()
-    /// Heartbeat grace before the host kills a session.
-    ///
-    /// Was 12s, which killed healthy sessions every 30-60s on a congested remote link:
-    /// heartbeats and pongs travel on the SAME TCP connection as media, so when a backlog
-    /// forms the pong queues behind video frames (head-of-line blocking) and arrives late
-    /// even though the client is alive and streaming. The host then disconnected, the client
-    /// reconnected, and the cycle repeated — which is what the diagnostic logs show.
-    ///
-    /// 30s is still well inside the client's own stall detection (8s foreground / 22s PiP),
-    /// so genuinely dead connections are still caught quickly, just by the side that can tell
-    /// the difference between "silent" and "slow".
-    private let heartbeatTimeout: TimeInterval = 30
+    private var lastDropLogAt = Date.distantPast
+
+    private let stateQueue = DispatchQueue(label: "com.beam.session.state", qos: .userInteractive)
 
     init(connection: NWConnection, server: StreamServer) {
-        self.connection = connection
+        link = PhorosConnection(accepting: connection, queue: stateQueue)
         self.server = server
     }
 
     // MARK: - Lifecycle
 
     func start() {
-        connection.stateUpdateHandler = { [weak self] state in
-            self?.handleConnectionStateChange(state)
+        link.onReady = { [weak self] in
+            guard let self else { return }
+            logger.info("Session TCP connection ready from \(String(describing: self.link.connection.endpoint))")
         }
-        connection.start(queue: sendQueue)
-        receiveNextMessage()
+        link.onFrame = { [weak self] frame in self?.handleFrame(frame) }
+        link.onEnd = { [weak self] reason in
+            guard let self else { return }
+            switch reason {
+            case .transportFailed(let error): logger.error("Session TCP failed: \(error)")
+            case .protocolViolation(let violation): logger.error("Session \(self.id) protocol violation: \(String(describing: violation))")
+            case .closedByPeer: logger.info("Session \(self.id) peer closed connection")
+            case .cancelled: break
+            }
+            self.server?.sessionDisconnected(self)
+        }
+        link.start()
     }
 
     func disconnect() {
@@ -146,80 +95,52 @@ final class StreamSession {
         isTerminated = true
         heartbeatTimer?.cancel()
         heartbeatTimer = nil
-        connection.cancel()
-        udpConnection?.cancel()
+        link.cancel()
         logger.info("Session \(self.id) disconnected")
+    }
+
+    // MARK: - Inbound
+
+    private func handleFrame(_ frame: Frame) {
+        heartbeat.heard()
+        switch frame {
+        case .packet(let packet) where packet.type == .input:
+            // Controller input is recognised and dropped rather than ignored. Beacon cannot
+            // replay it into a virtual gamepad without the approval-gated
+            // com.apple.developer.hid.virtual.device entitlement. Dropping it here matters:
+            // falling through to the JSON path floods the log at 60 Hz.
+            return
+        case .packet(let packet):
+            handleJSONMessage(packet.payload)
+        case .message(let json):
+            handleJSONMessage(json)
+        }
+    }
+
+    private func handleJSONMessage(_ data: Data) {
+        if let message = try? JSONDecoder().decode(PairingMessage.self, from: data) {
+            handlePairingMessage(message)
+            return
+        }
+        do {
+            handleControlMessage(try JSONDecoder().decode(ControlMessage.self, from: data))
+        } catch ControlMessageError.unknownType(let name) {
+            // A newer client. Ignoring is the contract; see Phoros docs/compatibility.md.
+            logger.info("Ignoring unknown control message '\(name)' from a newer client")
+        } catch {
+            logger.error("Failed to decode incoming message: \(error)")
+        }
     }
 
     // MARK: - Authentication
 
-    private func handleConnectionStateChange(_ state: NWConnection.State) {
-        switch state {
-        case .ready:
-            logger.info("Session TCP connection ready from \(String(describing: self.connection.endpoint))")
-        case .failed(let error):
-            logger.error("Session TCP failed: \(error)")
-            server?.sessionDisconnected(self)
-        case .cancelled:
-            server?.sessionDisconnected(self)
-        default:
-            break
-        }
-    }
-
-    private func receiveNextMessage() {
-        // Read 4-byte length prefix first
-        connection.receive(minimumIncompleteLength: 4, maximumLength: 4) { [weak self] data, _, isComplete, error in
-            guard let self else { return }
-            if let error { logger.error("Receive error: \(error)"); self.disconnect(); return }
-            if isComplete { logger.info("Session \(self.id) peer closed connection"); self.disconnect(); return }
-            guard let data, data.count == 4 else { return }
-
-            let length = data.withUnsafeBytes { $0.loadUnaligned(as: UInt32.self).bigEndian }
-
-            self.connection.receive(minimumIncompleteLength: Int(length), maximumLength: Int(length)) { [weak self] payload, _, isComplete, error in
-                guard let self else { return }
-                if let error { logger.error("Receive payload error: \(error)"); self.disconnect(); return }
-                if isComplete { self.disconnect(); return }
-                guard let payload else { return }
-
-                self.handleIncomingMessage(payload)
-                self.receiveNextMessage()
-            }
-        }
-    }
-
-    private func handleIncomingMessage(_ data: Data) {
-        // Binary packets carry a BeamPacketHeader; JSON messages never start with the
-        // "BEAM" magic, so this check is unambiguous and cheap.
-        //
-        // Controller input (.input) is recognised and dropped rather than ignored. Beacon
-        // cannot replay it into a virtual gamepad without the approval-gated
-        // com.apple.developer.hid.virtual.device entitlement, which Apple has not granted
-        // yet. Dropping it here matters: falling through to the JSON path floods the log
-        // with decode failures at 60 Hz for as long as a controller is connected.
-        if let header = BeamPacketHeader.parse(from: data), header.type == .input {
-            return
-        }
-        do {
-            let message = try JSONDecoder().decode(BeamPairingMessage.self, from: data)
-            handlePairingMessage(message)
-        } catch {
-            // Try control message
-            if let message = try? JSONDecoder().decode(BeamControlMessage.self, from: data) {
-                handleControlMessage(message)
-            } else {
-                logger.error("Failed to decode incoming message")
-            }
-        }
-    }
-
-    private func handlePairingMessage(_ message: BeamPairingMessage) {
+    private func handlePairingMessage(_ message: PairingMessage) {
         switch message.type {
         case .authRequest:
             handleAuthRequest(message)
         case .hello:
-            handleHello(message)
+            guard let deviceID = message.deviceID, let deviceName = message.deviceName else { return }
+            PairingManager.shared.beginPairing(deviceID: deviceID, deviceName: deviceName, session: self)
         case .codeVerify:
             if let code = message.code {
                 PairingManager.shared.verifyCode(code)
@@ -229,258 +150,164 @@ final class StreamSession {
         }
     }
 
-    private func handleAuthRequest(_ message: BeamPairingMessage) {
-        guard let deviceID = message.deviceID,
-              let secretHex = message.sharedSecret,
-              let secretData = Data(hexEncoded: secretHex) else {
-            sendPairingResponse(BeamPairingMessage(
-                type: .authFailed, deviceName: nil, deviceID: nil,
-                code: nil, sharedSecret: nil, error: "Invalid auth request"
-            ))
-            return
-        }
-
-        // Look up the device in paired devices
-        let pairedDevices = KeyStore.shared.loadPairedDevices()
-        guard let device = pairedDevices.first(where: { $0.id == deviceID }) else {
-            sendPairingResponse(BeamPairingMessage(
-                type: .authFailed, deviceName: nil, deviceID: nil,
-                code: nil, sharedSecret: nil, error: "Device not paired"
-            ))
-            return
-        }
-
-        // Verify the secret matches
-        guard device.sharedSecret == secretData else {
-            sendPairingResponse(BeamPairingMessage(
-                type: .authFailed, deviceName: nil, deviceID: nil,
-                code: nil, sharedSecret: nil, error: "Authentication failed"
-            ))
-            return
-        }
-
-        // Audio codec negotiation (BEAM-22). Absence of the field means a client that predates
-        // negotiation and can only decode Float32 PCM — feeding it AAC bytes would be
-        // full-scale white noise, so absence is never treated optimistically. An empty array
-        // means exactly the same thing as ["pcm_f32le"], never "anything goes".
+    private func handleAuthRequest(_ message: PairingMessage) {
         // Honour the client's requested audio rate so it never has to renegotiate mid-session
         // (BEAM-29). Clamped to rates ScreenCaptureKit will actually produce; anything else
         // falls back to the existing behaviour of the host choosing.
-        if let requested = message.preferredAudioSampleRate,
-           [44_100.0, 48_000.0].contains(requested) {
+        if let requested = message.preferredAudioSampleRate, [44_100.0, 48_000.0].contains(requested) {
             server?.setPreferredAudioSampleRate(requested)
             logger.info("Client requested audio sample rate \(Int(requested))Hz")
         }
 
-        let advertised = message.supportedAudioCodecs ?? []
-        let forcePCM = UserDefaults.standard.bool(forKey: BeamAudioCodec.forcePCMDefaultsKey)
-        negotiatedAudioCodec = (!forcePCM && advertised.contains(BeamAudioCodec.aacLC.wireName))
-            ? .aacLC : .pcmFloat32
+        // The force-PCM default is Beacon's escape hatch for a bad AAC release.
+        let forcePCM = UserDefaults.standard.bool(forKey: AudioCodecID.forcePCMDefaultsKey)
+        let pairedDevices = KeyStore.shared.loadPairedDevices()
+        let outcome = HostAuthenticator.authenticate(
+            message,
+            storedSecret: { deviceID in
+                pairedDevices.first { $0.id == deviceID }.flatMap { SharedSecret(bytes: $0.sharedSecret) }
+            },
+            // Re-advertise our tailnet address on every auth, not just at pairing: this is
+            // how the phone's stored remote address self-heals if our Tailscale IP ever
+            // changes (BEAM-19).
+            capabilities: Self.hostCapabilities(),
+            audioPreferences: forcePCM ? [.pcmFloat32] : [.aacLC, .pcmFloat32]
+        )
 
-        // Video codec negotiation, same shape as audio. Absence of the field, or absence of
-        // "hevc" within it, means an H.264-only client — never treated optimistically, because
-        // an HEVC stream to such a client would leave it unable to build a format description
-        // and the picture would never appear.
-        let advertisedVideo = message.supportedVideoCodecs ?? []
-        negotiatedVideoCodec = advertisedVideo.contains(BeamVideoCodec.hevc.wireName) ? .hevc : .h264
+        switch outcome {
+        case .rejected(let reply):
+            sendPairingResponse(reply)
+        case .authenticated(let session):
+            negotiatedAudioCodec = session.audioCodec
+            negotiatedVideoCodec = session.videoCodec
+            wantsAudio = session.peer.wantsAudio
+            scheduler.policy = session.audioCodec == .pcmFloat32 ? .pcmAudio : SendPolicy()
+            isAuthenticated = true
+            authenticatedDeviceID = session.deviceID
+            sendPairingResponse(session.reply)
 
-        // Absence means an older client, which always wants audio.
-        wantsAudio = message.wantsAudio ?? true
+            let deviceName = pairedDevices.first { $0.id == session.deviceID }?.name ?? session.deviceID
+            server?.sessionAuthenticated(self, deviceName: deviceName)
+            logger.info("Session authenticated for device '\(deviceName)' — audio \(self.wantsAudio ? self.negotiatedAudioCodec.wireName : "off"), video \(self.negotiatedVideoCodec.wireName)")
+        }
+    }
 
-        // Success
-        isAuthenticated = true
-        sharedSecret = SymmetricKey(data: device.sharedSecret)
-        authenticatedDeviceID = deviceID
-
-        // Re-advertise our tailnet address on every auth, not just at pairing: this is how the
-        // phone's stored remote address self-heals if our Tailscale IP ever changes (BEAM-19).
-        sendPairingResponse(BeamPairingMessage(
-            type: .authSuccess, deviceName: Host.current().localizedName,
-            deviceID: nil, code: nil, sharedSecret: nil, error: nil,
-            tailscaleHosts: TailscaleAddress.advertisedHosts(),
+    /// Everything this Beacon advertises about itself. Shared with PairingManager so
+    /// pair_success and auth_success never disagree.
+    static func hostCapabilities() -> HostCapabilities {
+        HostCapabilities(
+            deviceName: Host.current().localizedName,
+            remoteHosts: TailscaleAddress.advertisedHosts() ?? [],
             supportsRemoteAccess: true,
             supportsVideoHold: true,
-            selectedAudioCodec: negotiatedAudioCodec.wireName,
-            selectedVideoCodec: negotiatedVideoCodec.wireName,
             supportsAudioToggle: true,
             supportsWindowSelection: true,
-            phoneControls: PhoneControlsStore.shared.wireControls()
-        ))
-
-        server?.sessionAuthenticated(self, deviceName: device.name)
-        logger.info("Session authenticated for device '\(device.name)' — audio \(self.wantsAudio ? self.negotiatedAudioCodec.wireName : "off"), video \(self.negotiatedVideoCodec.wireName)")
+            controls: PhoneControlsStore.shared.wireControls()
+        )
     }
 
-    private func handleHello(_ message: BeamPairingMessage) {
-        // New pairing request - forward to PairingManager
-        guard let deviceID = message.deviceID, let deviceName = message.deviceName else { return }
-        PairingManager.shared.beginPairing(deviceID: deviceID, deviceName: deviceName, session: self)
-    }
-
-    // MARK: - Pairing responses
-
-    func sendPairingResponse(_ message: BeamPairingMessage) {
+    /// Host-to-client handshake messages always travel inside a .control packet so the
+    /// phone's receive loop, which parses a packet header first, dispatches them correctly.
+    func sendPairingResponse(_ message: PairingMessage) {
         guard let data = try? JSONEncoder().encode(message) else { return }
-        // iOS receiveNextPacket() expects every inbound packet to start with a
-        // BeamPacketHeader. Wrap auth/pairing responses in a .control header so
-        // the magic-byte check passes and the payload is dispatched correctly.
-        let header = BeamPacketHeader(type: .control, flags: 0, payloadLength: UInt32(data.count))
-        var packet = header.serialized()
-        packet.append(data)
-        sendTCP(packet.lengthPrefixed())
+        enqueue(Packet.encode(.control, payload: data), lane: .control)
     }
 
     // MARK: - Control Messages
 
-    private func handleControlMessage(_ message: BeamControlMessage) {
+    private func handleControlMessage(_ message: ControlMessage) {
         guard isAuthenticated else { return }
 
-        switch message.type {
-        case .mediaKey:
-            if case .mediaKey(let payload) = message.payload {
-                MediaKeyDispatcher.send(payload)
-            }
+        switch message {
+        case .mediaKey(let command):
+            MediaKeyDispatcher.send(command)
         case .pong:
-            lastPongReceivedAt = Date()
+            break  // heartbeat.heard() already ran for this frame
+        case .ping:
+            sendControl(.pong)
         case .videoPause:
-            videoPaused = true
-            // Drop anything already queued: it is stale by the time video resumes, and holding
-            // it defeats the point of quieting the link.
-            backlogLock.lock(); pendingVideo.removeAll(); backlogLock.unlock()
+            // Connection warm-up (BEAM-33): hold video so Tailscale's path discovery can
+            // finish, keep audio flowing. Queued video is stale by the time it resumes.
+            hold.pause()
+            scheduler.dropQueuedVideo()
             logger.info("Video paused by client (connection warmup)")
         case .videoResume:
-            videoPaused = false
+            // Releasing the hold is not enough on its own (BEAM-21): the encoder dropped
+            // everything during the hold, including the IDR, and considers its parameter
+            // sets sent. VideoHold spells out the repair; StreamServer performs both steps.
+            _ = hold.resume()
             logger.info("Video resumed by client")
-            // Releasing the hold is not enough on its own (BEAM-21). Everything encoded while
-            // it was held was dropped — including the IDR that opened this session — so the
-            // client's decoder has no reference frame, and the encoder considers its parameter
-            // sets already sent, so it never restates them. Left alone the stream stays black
-            // for its whole life. Restate the parameter sets and force a fresh IDR.
             server?.clientReleasedVideoHold(self)
-        case .ping:
-            // Must be wrapped in a BeamPacketHeader like every other control message. This
-            // previously sent bare JSON, which the client discards outright: its receive loop
-            // parses a packet header first and drops anything whose magic doesn't match. The
-            // pong therefore never arrived, so the client's RTT probe never completed and its
-            // link-quality badge sat on "Connecting…" forever.
-            let pong = BeamControlMessage(type: .pong, payload: nil)
-            if let data = try? JSONEncoder().encode(pong) {
-                let header = BeamPacketHeader(type: .control, flags: 0, payloadLength: UInt32(data.count))
-                var packet = header.serialized()
-                packet.append(data)
-                sendTCP(packet.lengthPrefixed())
-            }
         case .streamStop:
             logger.info("Client requested stream stop")
             disconnect()
-        case .qualityFeedback:
-            if case .qualityFeedback(let payload) = message.payload {
-                server?.handleQualityFeedback(payload.quality)
-            }
-        case .qualityRequest:
-            if case .qualityRequest(let payload) = message.payload {
-                server?.handleQualityRequest(payload.preset)
-            }
-        case .viewportLockRequest:
-            if case .viewportLock(let payload) = message.payload {
-                server?.handleViewportLockRequest(payload)
-            }
+        case .qualityFeedback(let quality):
+            server?.handleQualityFeedback(quality)
+        case .qualityRequest(let preset):
+            server?.handleQualityRequest(preset)
+        case .viewportLockRequest(let lock):
+            server?.handleViewportLockRequest(lock)
         case .windowListRequest:
             server?.handleWindowListRequest(from: self)
-        case .windowSelectRequest:
-            if case .windowSelect(let payload) = message.payload {
-                server?.handleWindowSelectRequest(windowID: payload.windowID)
-            }
-        case .audioEnableRequest:
-            if case .audioEnable(let payload) = message.payload, payload.enabled != wantsAudio {
-                wantsAudio = payload.enabled
-                logger.info("Audio \(payload.enabled ? "enabled" : "disabled") by client")
-                server?.sessionAudioPreferenceChanged(self)
-            }
-        default:
-            break
+        case .windowSelectRequest(let windowID):
+            server?.handleWindowSelectRequest(windowID: windowID)
+        case .audioEnableRequest(let enabled):
+            guard enabled != wantsAudio else { return }
+            wantsAudio = enabled
+            logger.info("Audio \(enabled ? "enabled" : "disabled") by client")
+            server?.sessionAudioPreferenceChanged(self)
+        case .streamRequest, .qualityChanged, .audioFormatChanged, .windowList, .captureModeChanged:
+            break  // host-to-client, or not acted on by this host
         }
     }
 
-    // MARK: - Quality Changed
-
-    func sendQualityChanged(_ preset: StreamQualityPreset) {
-        let msg = BeamControlMessage(
-            type: .qualityChanged,
-            payload: .qualityChanged(BeamQualityPayload(preset: preset))
-        )
-        guard let data = try? JSONEncoder().encode(msg) else { return }
-        let header = BeamPacketHeader(type: .control, flags: 0, payloadLength: UInt32(data.count))
-        var packet = header.serialized()
-        packet.append(data)
-        sendTCP(packet.lengthPrefixed())
+    func sendQualityChanged(_ preset: QualityPreset) {
+        sendControl(.qualityChanged(preset))
     }
 
     /// Reply to a window_list_request (BEAM-35). Authenticated sessions only — the guard in
     /// handleControlMessage already enforces that, and this is only ever called from there.
-    func sendWindowList(_ windows: [BeamWindowInfo]) {
-        sendControl(BeamControlMessage(type: .windowList, payload: .windowList(BeamWindowListPayload(windows: windows))))
+    func sendWindowList(_ windows: [WindowInfo]) {
+        sendControl(.windowList(windows))
     }
 
-    func sendCaptureMode(_ mode: BeamCaptureModePayload) {
+    func sendCaptureMode(_ mode: CaptureMode) {
         guard isAuthenticated else { return }
-        sendControl(BeamControlMessage(type: .captureModeChanged, payload: .captureMode(mode)))
-    }
-
-    private func sendControl(_ msg: BeamControlMessage) {
-        guard let data = try? JSONEncoder().encode(msg) else { return }
-        let header = BeamPacketHeader(type: .control, flags: 0, payloadLength: UInt32(data.count))
-        var packet = header.serialized()
-        packet.append(data)
-        sendTCP(packet.lengthPrefixed())
+        sendControl(.captureModeChanged(mode))
     }
 
     func sendAudioFormatChanged(sampleRate: Double, channels: Int) {
-        let msg = BeamControlMessage(
-            type: .audioFormatChanged,
-            payload: .audioFormat(BeamAudioFormatPayload(sampleRate: sampleRate, channels: channels))
-        )
-        guard let data = try? JSONEncoder().encode(msg) else { return }
-        let header = BeamPacketHeader(type: .control, flags: 0, payloadLength: UInt32(data.count))
-        var packet = header.serialized()
-        packet.append(data)
-        sendTCP(packet.lengthPrefixed())
+        sendControl(.audioFormatChanged(AudioFormat(sampleRate: sampleRate, channels: channels)))
     }
 
-    // MARK: - Unpair notification
-
     func sendUnpaired() {
-        let msg = BeamPairingMessage(
-            type: .unpaired, deviceName: nil, deviceID: nil,
-            code: nil, sharedSecret: nil, error: nil
-        )
-        sendPairingResponse(msg)
+        sendPairingResponse(PairingMessage(type: .unpaired))
+    }
+
+    private func sendControl(_ message: ControlMessage) {
+        guard let data = try? JSONEncoder().encode(message) else { return }
+        enqueue(Packet.encode(.control, payload: data), lane: .control)
     }
 
     // MARK: - Streaming
 
-    func beginReceivingStream(videoEncoder: VideoEncoder, audioEncoder: AudioEncoder) {
+    func beginReceivingStream(videoEncoder: HostVideoEncoder, audioEncoder: HostAudioEncoder) {
         logger.info("Session \(self.id) ready for streaming")
         startHeartbeat()
     }
 
-    // MARK: - Heartbeat
-
     private func startHeartbeat() {
-        lastPongReceivedAt = Date()
-        let timer = DispatchSource.makeTimerSource(queue: sendQueue)
+        heartbeat = HeartbeatMonitor()
+        let timer = DispatchSource.makeTimerSource(queue: stateQueue)
         timer.schedule(deadline: .now() + 5, repeating: 5)
         timer.setEventHandler { [weak self] in
-            guard let self, isAuthenticated else { return }
-            let elapsed = Date().timeIntervalSince(lastPongReceivedAt)
-            if elapsed > heartbeatTimeout {
-                logger.warning("Heartbeat timeout for session \(self.id) (\(elapsed, format: .fixed(precision: 1))s without pong)")
-                disconnect()
+            guard let self, self.isAuthenticated else { return }
+            if self.heartbeat.isTimedOut() {
+                logger.warning("Heartbeat timeout for session \(self.id) (\(Int(Date().timeIntervalSince(self.heartbeat.lastHeard)))s without traffic)")
+                self.disconnect()
                 return
             }
-            // Send a raw heartbeat packet; iOS responds with a pong (keeps connection alive)
-            let header = BeamPacketHeader(type: .heartbeat, flags: 0, payloadLength: 0)
-            sendTCP(header.serialized().lengthPrefixed())
+            self.enqueueLocked(Packet.encode(.heartbeat), lane: .control)
         }
         timer.resume()
         heartbeatTimer = timer
@@ -488,251 +315,88 @@ final class StreamSession {
 
     // MARK: - Send Video
 
-    func send(spsPps data: Data, codec: BeamVideoCodec) {
+    func send(spsPps data: Data, codec: VideoCodecID) {
         guard isAuthenticated else { return }
-        sendUDP(type: .spsPps, flags: codec.packetFlags, payload: data)
+        enqueue(Packet.encode(.parameterSets, flags: codec.packetFlags, payload: data), lane: .video)
     }
 
     func send(videoData: Data, pts: CMTime, isKeyframe: Bool) {
-        guard isAuthenticated, !videoPaused else { return }
-
-        // Drop rather than queue when the link is already behind. Keyframes are exempt:
-        // dropping one strands the decoder until the next IDR, which is a far worse artefact
-        // than a skipped delta frame.
-        // Video yields to the TOTAL backlog (it is the bulk of it, and it is what must give way
-        // so audio and control keep flowing).
-        if !isKeyframe, currentBacklog().total > maxQueuedMediaBytes {
-            droppedFrames += 1
-            let now = Date()
-            if now.timeIntervalSince(lastDropLogAt) >= 5 {
-                lastDropLogAt = now
-                logger.info("Dropping video to keep latency bounded (\(self.droppedFrames) frames, backlog \(self.currentBacklog().total / 1024)KB)")
+        stateQueue.async { [self] in
+            guard isAuthenticated, !hold.isHeld else { return }
+            guard scheduler.admitVideo(isKeyframe: isKeyframe) else {
+                logDropIfDue("Dropping video to keep latency bounded (\(scheduler.droppedVideoFrames) frames, backlog \(scheduler.backlog.total / 1024)KB)")
+                return
             }
-            return
-        }
-
-        let frameNum = videoFrameNumber
-        videoFrameNumber &+= 1
-
-        let videoHeader = BeamVideoPayloadHeader(
-            frameNumber: frameNum,
-            fragmentIndex: 0,
-            totalFragments: 1,
-            presentationTimestamp: pts.microseconds
-        )
-
-        // Fragment large frames
-        let maxPayload = kMaxUDPPayload - BeamVideoPayloadHeader.size
-        if videoData.count <= maxPayload {
-            var payload = videoHeader.serialized()
-            payload.append(videoData)
-            sendUDP(type: isKeyframe ? .videoIDR : .video, flags: 0, payload: payload)
-        } else {
-            let fragments = videoData.chunked(into: maxPayload)
-            let totalFragments = UInt16(fragments.count)
-            for (index, fragment) in fragments.enumerated() {
-                let fragHeader = BeamVideoPayloadHeader(
-                    frameNumber: frameNum,
-                    fragmentIndex: UInt16(index),
-                    totalFragments: totalFragments,
-                    presentationTimestamp: pts.microseconds
-                )
-                var payload = fragHeader.serialized()
-                payload.append(fragment)
-                sendUDP(type: isKeyframe ? .videoIDR : .video, flags: 0, payload: payload)
+            let frameNumber = videoFrameNumber
+            videoFrameNumber &+= 1
+            for payload in VideoFragmentHeader.fragment(
+                videoData, frameNumber: frameNumber, presentationTimestamp: pts.microseconds, maximumPayloadLength: kMaxMediaPayload
+            ) {
+                enqueueLocked(Packet.encode(isKeyframe ? .videoKeyframe : .video, payload: payload), lane: .video)
             }
         }
     }
 
     // MARK: - Send Audio
 
-    func send(audioData: Data, codec: BeamAudioCodec, pts: CMTime) {
-        // Belt and braces: StreamServer already fans each representation out only to the
-        // sessions that negotiated it, but a fan-out bug must never be able to put AAC bytes
-        // on a legacy wire — that is white noise into someone's headphones, not a glitch.
-        guard isAuthenticated, wantsAudio, codec == negotiatedAudioCodec else { return }
-
-        // Audio must be able to shed load too, or it starves video off the link entirely.
-        // Its ceiling is deliberately higher than video's: dropped audio splices rather than
-        // gapping (the receiver reorders by sequence but never inserts silence), so it should
-        // only ever give way when the link is genuinely unable to carry it.
-        //
-        // Gated on the AUDIO backlog only (BEAM-24). At 128 kbps AAC, 64 KB is ~4 s of audio,
-        // so this only ever fires on a link that genuinely cannot carry 128 kbps at all.
-        let backlog = currentBacklog()
-        let now = Date()
-        if backlog.audio > maxQueuedAudioBytes {
-            // Hard liveness guarantee: audio may be shed, but never for longer than
-            // `maxAudioDropWindow`. Admitting ~128 kbps onto a saturated link cannot recreate
-            // the BEAM-21 latency blowup (that was 2.82 Mbps of PCM), and it makes "audio dead
-            // for the rest of the session" structurally impossible on the host side.
-            if now.timeIntervalSince(lastAudioSentAt) <= maxAudioDropWindow {
-                droppedAudioChunks += 1
-                if now.timeIntervalSince(lastDropLogAt) >= 5 {
-                    lastDropLogAt = now
-                    logger.info("Dropping audio, link saturated (\(self.droppedAudioChunks) chunks, audio backlog \(backlog.audio / 1024)KB, total \(backlog.total / 1024)KB)")
-                }
+    func send(audioData: Data, codec: AudioCodecID, pts: CMTime) {
+        stateQueue.async { [self] in
+            // Belt and braces: StreamServer already fans each representation out only to the
+            // sessions that negotiated it, but a fan-out bug must never be able to put AAC
+            // bytes on a legacy wire — that is white noise into someone's headphones.
+            guard isAuthenticated, wantsAudio, codec == negotiatedAudioCodec else { return }
+            guard scheduler.admitAudio() else {
+                logDropIfDue("Dropping audio, link saturated (\(scheduler.droppedAudioChunks) chunks, audio backlog \(scheduler.backlog.audio / 1024)KB)")
                 return
             }
-            logger.warning("Audio backlog \(backlog.audio / 1024)KB over ceiling but silent for >\(self.maxAudioDropWindow)s — sending anyway to guarantee liveness")
-        }
-        lastAudioSentAt = now
-
-        let seqNum = audioSequenceNumber
-        audioSequenceNumber &+= 1
-
-        let audioHeader = BeamAudioPayloadHeader(
-            sequenceNumber: seqNum,
-            presentationTimestamp: pts.microseconds
-        )
-        var payload = audioHeader.serialized()
-        payload.append(audioData)
-        // Audio has no fragmentation path and none is being added; an over-cap payload would
-        // be silently truncated/mis-framed at the receiver, so drop it instead.
-        guard payload.count <= kMaxUDPPayload else {
-            logger.error("Dropping oversized audio payload (\(payload.count) B > \(kMaxUDPPayload))")
-            return
-        }
-        sendUDP(type: .audio, flags: codec.packetFlags, payload: payload)
-    }
-
-    // MARK: - Network Send Helpers
-
-    /// Thread-safe snapshot of the send backlog.
-    private func currentBacklog() -> (total: Int, audio: Int) {
-        backlogLock.lock(); defer { backlogLock.unlock() }
-        return (inFlightBytes, inFlightAudioBytes)
-    }
-
-    // MARK: - Priority send queue (BEAM-31)
-    //
-    // Everything shares one TCP connection, so ORDER IS LATENCY: a packet written after a
-    // 100KB keyframe waits for all of it to drain. On a LAN that is microseconds. On a
-    // constrained tailnet it is seconds, and audio inherits that delay.
-    //
-    // That is one half of why audio ran ~2s behind video remotely (the other half being that
-    // video sheds frames under congestion while audio does not, so audio accumulates the
-    // delay it could not deliver on time). Audio is ~96kbps against megabits of video, so
-    // letting it jump the queue costs video almost nothing and stops the offset forming
-    // rather than absorbing it after the fact.
-    //
-    // Writes are serialised through this queue so ordering is ours to decide, not a race
-    // between call sites.
-    /// While true the host holds video and keeps audio flowing (BEAM-33).
-    ///
-    /// Used during connection warmup: Tailscale always starts DERP-relayed and upgrades to a
-    /// direct path using small discovery packets. Flooding the relay with video starves those
-    /// packets, so the upgrade never completes and we stay on the slow path we created.
-    /// Audio is ~96kbps and leaves the relay effectively idle, so it can flow throughout
-    /// without preventing the upgrade.
-    private var videoPaused = false
-
-    private var pendingAudio: [Data] = []
-    private var pendingVideo: [Data] = []
-    /// Number of writes handed to the transport but not yet acknowledged.
-    ///
-    /// This was a single boolean, which made the send path stop-and-wait: one outstanding
-    /// write at a time, each waiting for .contentProcessed before the next. A 1080p60 frame
-    /// fragments into dozens of writes, so throughput collapsed and even a LAN backed up —
-    /// Kevin's log went from clean to -10s drift on local. Allowing a window restores
-    /// pipelining while still draining audio first, which was the actual goal.
-    private var writesInFlight = 0
-    private let maxConcurrentWrites = 8
-
-    private func enqueueSend(_ data: Data, isAudio: Bool) {
-        backlogLock.lock()
-        if isAudio { pendingAudio.append(data) } else { pendingVideo.append(data) }
-        backlogLock.unlock()
-        drainSendQueue()
-    }
-
-    /// Writes one buffer at a time, audio first, so a queued keyframe can never delay audio.
-    private func drainSendQueue() {
-        while true {
-            backlogLock.lock()
-            guard writesInFlight < maxConcurrentWrites else { backlogLock.unlock(); return }
-            // Audio first, always: that is the whole point of the queue.
-            let isAudio = !pendingAudio.isEmpty
-            guard let next = isAudio ? pendingAudio.first : pendingVideo.first else {
-                backlogLock.unlock(); return
+            let sequence = audioSequenceNumber
+            audioSequenceNumber &+= 1
+            var payload = AudioChunkHeader(sequenceNumber: sequence, presentationTimestamp: pts.microseconds).serialized()
+            payload.append(audioData)
+            // Audio has no fragmentation path; an over-cap payload would be mis-framed at the
+            // receiver, so drop it instead.
+            guard payload.count <= kMaxMediaPayload else {
+                logger.error("Dropping oversized audio payload (\(payload.count) B > \(kMaxMediaPayload))")
+                return
             }
-            if isAudio { pendingAudio.removeFirst() } else { pendingVideo.removeFirst() }
-            writesInFlight += 1
-            backlogLock.unlock()
+            enqueueLocked(Packet.encode(.audio, flags: codec.packetFlags, payload: payload), lane: .audio)
+        }
+    }
 
-            sendTCP(next, isAudio: isAudio) { [weak self] in
+    // MARK: - Scheduler plumbing
+
+    private func enqueue(_ packet: Data, lane: SendLane) {
+        stateQueue.async { [self] in enqueueLocked(packet, lane: lane) }
+    }
+
+    /// stateQueue only.
+    private func enqueueLocked(_ packet: Data, lane: SendLane) {
+        scheduler.enqueue(packet.lengthPrefixed(), lane: lane)
+        drain()
+    }
+
+    /// stateQueue only. Hands writes to the transport, control first, then audio, then video.
+    private func drain() {
+        while let write = scheduler.dequeue() {
+            link.connection.send(content: write.data, completion: .contentProcessed { [weak self] error in
                 guard let self else { return }
-                self.backlogLock.lock()
-                self.writesInFlight -= 1
-                self.backlogLock.unlock()
-                self.drainSendQueue()
-            }
+                self.stateQueue.async {
+                    self.scheduler.completed(write)
+                    if let error {
+                        logger.error("TCP send error: \(error)")
+                        self.disconnect()
+                        return
+                    }
+                    self.drain()
+                }
+            })
         }
     }
 
-    private func sendTCP(_ data: Data, isAudio: Bool = false, onComplete: (() -> Void)? = nil) {
-        let byteCount = data.count
-        backlogLock.lock()
-        inFlightBytes += byteCount
-        if isAudio { inFlightAudioBytes += byteCount }
-        outstandingSends += 1
-        backlogLock.unlock()
-
-        connection.send(content: data, completion: .contentProcessed { [weak self] error in
-            guard let self else { return }
-            self.backlogLock.lock()
-            self.inFlightBytes -= byteCount
-            if isAudio { self.inFlightAudioBytes -= byteCount }
-            self.outstandingSends -= 1
-            // Re-anchor whenever the connection has fully drained. Any drift accumulated by a
-            // torn read-modify-write (or a completion that never fired) is erased here, so the
-            // counters can never latch above a drop threshold and silence a stream forever.
-            defer { onComplete?() }
-            if self.outstandingSends <= 0 {
-                self.outstandingSends = 0
-                self.inFlightBytes = 0
-                self.inFlightAudioBytes = 0
-            }
-            self.backlogLock.unlock()
-
-            if let error {
-                logger.error("TCP send error: \(error)")
-                self.disconnect()
-            }
-        })
-    }
-
-    private func sendUDP(type: BeamPacketType, flags: UInt8, payload: Data) {
-        let header = BeamPacketHeader(type: type, flags: flags, payloadLength: UInt32(payload.count))
-        var packet = header.serialized()
-        packet.append(payload)
-
-        // Media goes through the priority queue so audio is never stuck behind a keyframe.
-        // Control messages keep writing directly: they are tiny, latency-critical in their own
-        // right (heartbeats, auth), and must not be reordered behind queued media.
-        enqueueSend(packet.lengthPrefixed(), isAudio: type == .audio)
-    }
-}
-
-// MARK: - Data Extension
-
-private extension Data {
-    func chunked(into size: Int) -> [Data] {
-        stride(from: 0, to: count, by: size).map {
-            self[$0..<Swift.min($0 + size, count)]
-        }
-    }
-
-    init?(hexEncoded hex: String) {
-        guard hex.count % 2 == 0 else { return nil }
-        var data = Data(capacity: hex.count / 2)
-        var index = hex.startIndex
-        while index < hex.endIndex {
-            let nextIndex = hex.index(index, offsetBy: 2)
-            guard let byte = UInt8(hex[index..<nextIndex], radix: 16) else { return nil }
-            data.append(byte)
-            index = nextIndex
-        }
-        self = data
+    private func logDropIfDue(_ message: String) {
+        let now = Date()
+        guard now.timeIntervalSince(lastDropLogAt) >= 5 else { return }
+        lastDropLogAt = now
+        logger.info("\(message)")
     }
 }

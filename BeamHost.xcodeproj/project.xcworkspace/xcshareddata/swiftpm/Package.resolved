@@ -1,13 +1,22 @@
 {
-  "originHash" : "e721da7f9826abdffcb6185e886155efa2514bd6234475f1afa893e29eb258d6",
+  "originHash" : "3565acea000946bb065539476c2ec36546cec9856a42044800630603e0d86b84",
   "pins" : [
+    {
+      "identity" : "phoros",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/kevinerikjs/phoros.git",
+      "state" : {
+        "revision" : "c3371e65f90c67b939a4c675e267aed8a0c8073b",
+        "version" : "1.0.0"
+      }
+    },
     {
       "identity" : "sparkle",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/sparkle-project/Sparkle",
       "state" : {
-        "revision" : "21d8df80440b1ca3b65fa82e40782f1e5a9e6ba2",
-        "version" : "2.9.0"
+        "revision" : "eef1a539a373c1f1a320624b1130fc5de7b2e100",
+        "version" : "2.10.0"
       }
     }
   ],

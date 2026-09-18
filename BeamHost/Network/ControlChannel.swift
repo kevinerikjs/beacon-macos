@@ -2,6 +2,7 @@
 // Sends configured phone-control events to the system on behalf of the connected iPhone.
 
 import AppKit
+import Phoros
 import ApplicationServices
 import Carbon.HIToolbox
 import OSLog
@@ -31,7 +32,7 @@ enum MediaKeyDispatcher {
 
     /// Sends a configured action when the phone includes a control id. Legacy phone clients only
     /// send `key`, so they retain the original arrow-key and NX media-key behaviour.
-    static func send(_ payload: BeamMediaKeyPayload) {
+    static func send(_ payload: MediaKeyCommand) {
         guard isAccessibilityGranted else {
             logger.warning("Accessibility permission not granted; phone control dropped. Grant access in System Settings > Privacy > Accessibility.")
             return
@@ -48,7 +49,7 @@ enum MediaKeyDispatcher {
     /// Maps phone taps to screen points (BEAM-40). Set by StreamServer at start.
     static var screenPointForTap: ((CGPoint) -> CGPoint?)?
 
-    private static func perform(_ action: PhoneControlAction, payload: BeamMediaKeyPayload) {
+    private static func perform(_ action: PhoneControlAction, payload: MediaKeyCommand) {
         switch action {
         case .textInput(_, let sendReturn):
             guard let text = payload.text, !text.isEmpty else { return }
@@ -87,7 +88,7 @@ enum MediaKeyDispatcher {
         }
     }
 
-    private static func performLegacy(_ key: BeamMediaKeyPayload.Key) {
+    private static func performLegacy(_ key: MediaKeyCommand.Key) {
         switch key {
         case .seekBackward:
             postKeyPress(keyCode: UInt32(kVK_LeftArrow), modifiers: 0)
