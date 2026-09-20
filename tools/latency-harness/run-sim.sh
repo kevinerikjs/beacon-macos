@@ -20,13 +20,13 @@ BEACON_HARNESS=1 BEACON_HARNESS_LOG="$OUT/beacon.log" "$APP/Contents/MacOS/Beaco
 BEACON_PID=$!
 restore() {
   kill $BEACON_PID 2>/dev/null || true; sleep 1
-  if [ -d "$HOME/Applications/Beacon.app" ]; then (nohup "$HOME/Applications/Beacon.app/Contents/MacOS/Beacon" >/dev/null 2>&1 &); fi
+  (nohup "$APP/Contents/MacOS/Beacon" >/dev/null 2>&1 &)  # the build under test, never an older Beacon
 }
 trap restore EXIT
 for i in $(seq 1 40); do nc -z 127.0.0.1 7979 2>/dev/null && break; sleep 0.25; done
 sleep 1.5
 xcrun simctl terminate "$SIM" "$BUNDLE" 2>/dev/null || true
-xcrun simctl launch "$SIM" "$BUNDLE" -harness 127.0.0.1 "$PRESSES" "$INTERVAL" "$PRESET" >"$OUT/launch.txt" 2>&1
+xcrun simctl launch "$SIM" "$BUNDLE" -harness 127.0.0.1 "$PRESSES" "$INTERVAL" "$PRESET" ${HARNESS_EXTRA:-} >"$OUT/launch.txt" 2>&1
 CONTAINER=$(xcrun simctl get_app_container "$SIM" "$BUNDLE" data)
 DEADLINE=$(( $(date +%s) + 25 + PRESSES * (INTERVAL + 200) / 1000 ))
 while [ "$(date +%s)" -lt "$DEADLINE" ]; do

@@ -416,6 +416,8 @@ final class StreamSession {
         media.onTrace = transport.onTrace
         rtcPeer = peer
         rtcTransport = media
+        // PHOROS_UDP_CLASS=0|3|4: the peer socket's service class (harness experiment)
+        if let c = ProcessInfo.processInfo.environment["PHOROS_UDP_CLASS"].flatMap(Int32.init) { peer.setServiceClass(c) }
         guard peer.runOwnSocket() == 0 else { rtcPeer = nil; rtcTransport = nil; return }
         transport.sendControl(.transportOffer(TransportOffer(kind: "rtc2", address: address, info: peer.localInfo)))
         logger.info("rtc2 offered at \(address)")
