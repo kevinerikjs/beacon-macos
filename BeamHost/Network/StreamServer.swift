@@ -140,7 +140,9 @@ final class StreamServer {
     func start() {
         do {
             let params = PhorosConnection.parameters()
-            params.includePeerToPeer = true
+            // No peer-to-peer: it keeps AWDL up, and AWDL takes the Wi-Fi radio away for
+            // ~90 ms every half second on both devices for the whole session (BEAM-47).
+            params.includePeerToPeer = false
 
             listener = try NWListener(using: params, on: NWEndpoint.Port(rawValue: listeningPort) ?? 7979)
 
