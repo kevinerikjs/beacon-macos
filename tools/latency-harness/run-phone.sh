@@ -14,7 +14,9 @@ DEVICE="${HARNESS_DEVICE:-$(xcrun devicectl list devices 2>/dev/null | grep -i '
 HOST="${HARNESS_HOST:-$(route -n get default 2>/dev/null | awk '/interface:/{print $2}' | xargs ipconfig getifaddr)}"
 BUNDLE="com.beamapp.ios"
 echo "device=$DEVICE host=$HOST out=$OUT"
-pkill -x Beacon 2>/dev/null || true; sleep 1
+pkill -x Beacon 2>/dev/null || true
+for i in $(seq 1 50); do lsof -nP -iTCP:7979 -sTCP:LISTEN >/dev/null 2>&1 || break; sleep 0.2; done   # the old listener must be gone
+sleep 0.5
 # the phone pushes its log here when the run ends (HarnessRunner.uploadLog)
 ( nc -l 7990 > "$OUT/client.push" 2>/dev/null ) &
 NC_PID=$!

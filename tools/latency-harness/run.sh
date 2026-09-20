@@ -7,7 +7,9 @@ LABEL="${1:-run}"; PRESSES="${2:-100}"; INTERVAL="${3:-700}"; PRESET="${4:-1080p
 OUT="/Volumes/yuh/business/.scratch/harness/$(date +%Y%m%d-%H%M%S)-$LABEL"
 mkdir -p "$OUT"
 APP="${BEACON_APP:-/Volumes/yuh/business/.scratch/dd-beacon-local/Build/Products/Debug/Beacon.app}"
-pkill -x Beacon 2>/dev/null || true; sleep 1
+pkill -x Beacon 2>/dev/null || true
+for i in $(seq 1 50); do lsof -nP -iTCP:7979 -sTCP:LISTEN >/dev/null 2>&1 || break; sleep 0.2; done   # the old listener must be gone
+sleep 0.5
 BEACON_HARNESS=1 BEACON_HARNESS_LOG="$OUT/beacon.log" "$APP/Contents/MacOS/Beacon" >"$OUT/beacon.stdout" 2>&1 &
 BEACON_PID=$!
 # wait for the listener
