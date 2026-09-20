@@ -27,7 +27,7 @@ final class BonjourAdvertiser {
     func start() {
         do {
             let parameters = NWParameters.tcp
-            parameters.includePeerToPeer = true
+            parameters.includePeerToPeer = false // see StreamServer: AWDL costs the stream its latency
 
             // Create listener specifically for Bonjour advertisement
             // (The actual connection handling is in StreamServer - this just announces)
