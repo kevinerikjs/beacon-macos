@@ -4,7 +4,9 @@
 
 import Network
 import Phoros
+import PhorosNetwork
 import Phoros
+import PhorosNetwork
 import ScreenCaptureKit
 import OSLog
 
@@ -114,7 +116,7 @@ final class StreamServer {
         videoEncoder = HostVideoEncoder(
             width: Int32(preset.width),
             height: Int32(preset.height),
-            frameRate: preset.frameRate,
+            frameRate: Harness.frameRate(for: preset.frameRate),
             bitrateMbps: preset.bitrateMbps
         )
         audioEncoder = HostAudioEncoder()
@@ -137,8 +139,10 @@ final class StreamServer {
 
     func start() {
         do {
-            let params = NWParameters.tcp
-            params.includePeerToPeer = true
+            let params = PhorosConnection.parameters()
+            // No peer-to-peer: it keeps AWDL up, and AWDL takes the Wi-Fi radio away for
+            // ~90 ms every half second on both devices for the whole session (BEAM-47).
+            params.includePeerToPeer = false
 
             listener = try NWListener(using: params, on: NWEndpoint.Port(rawValue: listeningPort) ?? 7979)
 
@@ -198,6 +202,18 @@ final class StreamServer {
     }
 
     /// Called by a session after it completes authentication.
+    /// A session dropped a delta frame to keep latency bounded and needs a keyframe to recover.
+    /// Coalesced: many drops in one burst produce one request.
+    private var keyframeRecoveryPending = false
+    func requestKeyframeForRecovery() {
+        guard !keyframeRecoveryPending else { return }
+        keyframeRecoveryPending = true
+        videoEncoder.requestKeyframe()
+        DispatchQueue.global(qos: .userInteractive).asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            self?.keyframeRecoveryPending = false
+        }
+    }
+
     func sessionAuthenticated(_ session: StreamSession, deviceName: String) {
         // If this device reconnects while an old session is still hanging around,
         // drop the stale duplicate so only one stream session remains for it.
@@ -245,6 +261,9 @@ final class StreamServer {
             // H.264-only while others were on HEVC). refreshVideoCodec reconfigures and clears
             // the stale cache in that case, so the resend below is never a wrong-codec blob.
             refreshVideoCodec()
+            // And it may raise or lower the capture rate: a 120 Hz client alone gets 120,
+            // a 60 Hz client joining brings it back to 60.
+            refreshFrameRate()
 
             // Send cached parameter sets so the new client can decode immediately, then force an
             // IDR so it doesn't have to wait up to 2 seconds for the next keyframe.
@@ -253,6 +272,7 @@ final class StreamServer {
             }
             videoEncoder.requestKeyframe()
         }
+        session.setMaximumBitrate(Int(qualityManager.activePreset.bitrateMbps * 1_000_000))
         session.beginReceivingStream(videoEncoder: videoEncoder, audioEncoder: audioEncoder)
 
         // Start the continuous capture watchdog once a client is active.
@@ -270,7 +290,7 @@ final class StreamServer {
         logger.info("Session disconnected: \(session.id). Active sessions: \(remaining)")
         refreshAACOutputEnabled()
         // A departing H.264-only client may let the remaining sessions upgrade to HEVC.
-        if remaining > 0 { refreshVideoCodec() }
+        if remaining > 0 { refreshVideoCodec(); refreshFrameRate() }
 
         if remaining == 0 {
             stopCaptureWatchdog()
@@ -390,6 +410,40 @@ final class StreamServer {
         logger.info("Quality broadcast → \(preset.rawValue)")
     }
 
+    /// The rate to capture and encode at for `preset`: the preset's own rate, raised toward
+    /// the display's refresh rate when every connected client asked for more (a client that
+    /// did not ask gets 60, as before; the lowest request wins so nobody decodes more than
+    /// it wanted). The harness `fps=` switch overrides everything.
+    func negotiatedFrameRate(for preset: QualityPreset) -> Double {
+        if Harness.experiment["fps"] != nil { return Harness.frameRate(for: preset.frameRate) }
+        let sessions = sessionsQueue.sync { Array(activeSessions.values).filter(\.isAuthenticated) }
+        guard !sessions.isEmpty else { return preset.frameRate }
+        let refresh = screenCapture.displayRefreshRate
+        return sessions.map {
+            PeerCapabilities(PairingMessage(type: .authRequest, maximumFrameRate: $0.maximumFrameRate))
+                .videoFrameRate(preset: preset.frameRate, hostRefreshRate: refresh)
+        }.min() ?? preset.frameRate
+    }
+
+    /// Re-applies the negotiated frame rate after a client joined or left.
+    private func refreshFrameRate() {
+        let preset = qualityManager.activePreset
+        let rate = negotiatedFrameRate(for: preset)
+        guard rate != screenCapture.currentFrameRate else { return }
+        logger.info("Frame rate → \(Int(rate)) fps (preset \(preset.rawValue), display \(Int(self.screenCapture.displayRefreshRate)) Hz)")
+        videoEncoder.reconfigure(frameRate: rate)
+        applyCaptureConfiguration()
+    }
+
+    /// A session's bitrate controller moved. The shared encoder runs at the lowest rate any
+    /// session wants: a fast link waiting on a slow one is better than a slow link that
+    /// never catches up.
+    func session(_ session: StreamSession, wantsBitrate: Int) {
+        let sessions = sessionsQueue.sync { Array(activeSessions.values) }
+        let lowest = sessions.map(\.wantedBitrate).min() ?? wantsBitrate
+        videoEncoder.setBitrate(lowest)
+    }
+
     func broadcastAudioFormatChanged(sampleRate: Double, channels: Int) {
         let sessions = sessionsQueue.sync { Array(activeSessions.values) }
         sessions.forEach { $0.sendAudioFormatChanged(sampleRate: sampleRate, channels: channels) }
@@ -398,18 +452,33 @@ final class StreamServer {
 
     private func applyQualityPreset(_ preset: QualityPreset) {
         // Keep the window's aspect across quality changes (BEAM-38).
-        videoEncoder.reconfigure(preset: preset, frameSize: screenCapture.frameSize(for: pendingWindowSelection, preset: preset, lock: screenCapture.sourceLockedViewport))
+        let frameRate = negotiatedFrameRate(for: preset)
+        videoEncoder.reconfigure(preset: preset, frameSize: screenCapture.frameSize(for: pendingWindowSelection, preset: preset, lock: screenCapture.sourceLockedViewport), frameRate: frameRate)
+        sessionsQueue.sync { Array(activeSessions.values) }.forEach { $0.setMaximumBitrate(Int(preset.bitrateMbps * 1_000_000)) }
         // The preset is the only signal the host has for "constrained link", and the auto
         // tiering drives it down on exactly those links. Bitrate is settable live, so this
         // neither tears down the converter nor re-anchors the PTS clock.
         audioEncoder.setAACBitrate(
             AudioCodecID.aacBitrate(for: preset, channels: currentAudioFormat?.channels ?? 2)
         )
-        Task {
-            try? await screenCapture.updateConfiguration(preset: preset)
-            broadcastQualityChanged(preset)
-        }
+        applyCaptureConfiguration { [weak self] in self?.broadcastQualityChanged(preset) }
         logger.info("Applying quality preset: \(preset.rawValue)")
+    }
+
+    /// Capture configuration changes are async and used to race: a preset applied at
+    /// session start could land after the client's own request and put a 120 fps stream
+    /// back to 30. One task at a time, each applying whatever is current when it runs.
+    private var captureConfigurationTask: Task<Void, Never>?
+    private func applyCaptureConfiguration(then completion: (() -> Void)? = nil) {
+        let previous = captureConfigurationTask
+        captureConfigurationTask = Task { [weak self] in
+            await previous?.value
+            guard let self else { return }
+            let preset = self.qualityManager.activePreset
+            let rate = self.negotiatedFrameRate(for: preset)
+            try? await self.screenCapture.updateConfiguration(preset: preset, frameRate: rate)
+            completion?()
+        }
     }
 
     // MARK: - Capture Watchdog
@@ -470,7 +539,11 @@ final class StreamServer {
         let preset = qualityManager.activePreset
         // No window chosen by a phone yet: apply the Mac's "on connect" preference (BEAM-41),
         // or the last thing captured when the user asked to resume instead (BEAM-42).
-        if pendingWindowSelection == nil {
+        if Harness.isEnabled {
+            // The harness captures its own flash window, so the rest of the Mac stays usable.
+            pendingWindowSelection = await Harness.flashSCWindow()
+        }
+        if pendingWindowSelection == nil, !Harness.isEnabled {
             let (resume, preference, last) = await MainActor.run {
                 (appState?.resumeLastCapture ?? false, appState?.defaultWindow, appState?.lastCapture)
             }
@@ -487,7 +560,7 @@ final class StreamServer {
                 display: display,
                 width: preset.width,
                 height: preset.height,
-                frameRate: preset.frameRate,
+                frameRate: negotiatedFrameRate(for: preset),
                 initialWindow: resolvedPendingWindow,
                 initialLockedViewport: pendingLockedViewportRect
             )
@@ -734,6 +807,23 @@ final class StreamServer {
 extension StreamServer: ScreenCaptureDelegate {
     func screenCapture(_ capture: ScreenCapture, didOutputVideoFrame frame: CMSampleBuffer) {
         lastVideoInputFrameAt = Date()
+        if Harness.isEnabled {
+            // H5: the frame's capture time (SCK stamps PTS on the host clock) and when it reached us.
+            let attachments = CMSampleBufferGetSampleAttachmentsArray(frame, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]]
+            let status = (attachments?.first?[.status] as? Int).flatMap(SCFrameStatus.init) ?? .idle
+            let hasPixels = CMSampleBufferGetImageBuffer(frame) != nil
+            Harness.log(hasPixels ? "H5" : "H5I", Int(CMSampleBufferGetPresentationTimeStamp(frame).microseconds), extra: "\(status.rawValue)")
+        }
+        if Harness.experiment["nogate"] == nil {
+            // Skip the frame when no session can take it. The encoder never sees it, so no
+            // reference breaks and no recovery keyframe follows; the next frame the link
+            // has room for is encoded against the last one it sent.
+            let sessions = sessionsQueue.sync { Array(activeSessions.values) }
+            if !sessions.isEmpty, !sessions.contains(where: \.acceptsVideoFrame) {
+                if Harness.isEnabled { Harness.log("H5S", Int(CMSampleBufferGetPresentationTimeStamp(frame).microseconds)) }
+                return
+            }
+        }
         videoEncoder.encode(sampleBuffer: frame)
     }
 

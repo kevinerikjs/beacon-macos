@@ -41,7 +41,9 @@ final class HostVideoEncoder {
     init(width: Int32, height: Int32, frameRate: Double = 30, bitrateMbps: Double = 6, codec: VideoCodecID = .h264) {
         encoder = PhorosMedia.VideoEncoder(configuration: VideoEncoderConfiguration(
             width: width, height: height, frameRate: frameRate,
-            bitrateBitsPerSecond: Int(bitrateMbps * 1_000_000), codec: codec
+            bitrateBitsPerSecond: Int(bitrateMbps * 1_000_000), codec: codec,
+            keyframeInterval: Harness.keyframeInterval,
+            latency: Harness.encoderTuning()
         ))
         encoder.onParameterSets = { [weak self] data, codec in
             guard let self else { return }
@@ -50,12 +52,17 @@ final class HostVideoEncoder {
         }
         encoder.onFrame = { [weak self] data, pts, isKeyframe in
             guard let self else { return }
+            if Harness.isEnabled { Harness.log("H5E", Int(pts.microseconds), extra: "\(data.count),\(isKeyframe ? 1 : 0)") }
             self.delegate?.videoEncoder(self, didEncodeFrame: data, presentationTime: pts, isKeyframe: isKeyframe)
+        }
+        encoder.onFrameDropped = {
+            if Harness.isEnabled { Harness.log("H5D", 0) }
         }
         encoder.onError = { status in
             // Never swallow this: a failed restart leaves the pipeline running with no encoder,
             // which reaches the user as a permanently black stream and nothing in the log.
             logger.error("VideoEncoder error (OSStatus \(status))")
+            if Harness.isEnabled { Harness.log("H5X", Int(status)) }
         }
     }
 
@@ -92,13 +99,18 @@ final class HostVideoEncoder {
     /// Restart with the given preset. `frameSize` overrides the preset's dimensions when the
     /// capture frame follows a window's aspect (BEAM-38); fps and bitrate still come from the
     /// preset. Fresh parameter sets and an IDR follow on the next encoded frame.
-    func reconfigure(preset: QualityPreset, frameSize: CGSize? = nil) {
+    func reconfigure(preset: QualityPreset, frameSize: CGSize? = nil, frameRate: Double? = nil) {
         encoder.reconfigure {
             $0.width = Int32(frameSize?.width ?? CGFloat(preset.width))
             $0.height = Int32(frameSize?.height ?? CGFloat(preset.height))
-            $0.frameRate = preset.frameRate
+            $0.frameRate = frameRate ?? Harness.frameRate(for: preset.frameRate)
             $0.bitrateBitsPerSecond = Int(preset.bitrateMbps * 1_000_000)
         }
+    }
+
+    /// Restart at a new frame rate, keeping everything else (a client asked for more or less).
+    func reconfigure(frameRate: Double) {
+        encoder.reconfigure { $0.frameRate = frameRate }
     }
 
     /// Restart on a new codec, keeping dimensions and bitrate. Used when the negotiated codec
@@ -113,6 +125,11 @@ final class HostVideoEncoder {
             $0.width = Int32(frameSize.width)
             $0.height = Int32(frameSize.height)
         }
+    }
+
+    /// Live bitrate change for link adaptation: no restart, no keyframe.
+    func setBitrate(_ bitsPerSecond: Int) {
+        encoder.setBitrate(bitsPerSecond)
     }
 
     /// Request that the next encoded frame be a keyframe (IDR). Safe from any thread.

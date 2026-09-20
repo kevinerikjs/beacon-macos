@@ -23,6 +23,7 @@ final class BeaconAppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // Onboarding is triggered from AppState.init() where self is guaranteed available.
+        Harness.startIfEnabled()
     }
 
     /// Called whenever a window gains focus or is about to close.

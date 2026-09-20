@@ -52,6 +52,7 @@ final class ScreenCapture: NSObject {
     func frameSize(for window: SCWindow?, preset: QualityPreset? = nil, lock: CGRect? = nil) -> CGSize {
         let pw = preset?.width ?? presetWidth
         let ph = preset?.height ?? presetHeight
+        if Harness.isEnabled { return CGSize(width: pw, height: ph) }   // deterministic frames for the harness
         let source: CGSize
         if let window, window.frame.width > 0, window.frame.height > 0 {
             source = window.frame.size
@@ -82,7 +83,7 @@ final class ScreenCapture: NSObject {
         currentWidth = Int(size.width)
         currentHeight = Int(size.height)
     }
-    private var currentFrameRate: Double = 30
+    private(set) var currentFrameRate: Double = 30
     /// Viewport lock in source-normalised space (0...1 of the window or display). Converted
     /// from the phone's frame-normalised rect once, at lock time, against the frame the phone
     /// was looking at; after that the frame itself takes the lock's aspect (BEAM-38), so the
@@ -207,14 +208,23 @@ final class ScreenCapture: NSObject {
     }
 
     /// Update stream resolution and frame rate without restarting the stream.
-    func updateConfiguration(preset: QualityPreset) async throws {
+    func updateConfiguration(preset: QualityPreset, frameRate: Double? = nil) async throws {
         guard let stream else { return }
         presetWidth = preset.width
         presetHeight = preset.height
-        currentFrameRate = preset.frameRate
+        currentFrameRate = frameRate ?? Harness.frameRate(for: preset.frameRate)
         applyFrameSize(frameSize(for: currentWindow, lock: sourceLockedViewport))
         try await stream.updateConfiguration(makeConfiguration(captureAudio: true))
-        logger.info("ScreenCapture updated → \(self.currentWidth)x\(self.currentHeight) @\(Int(preset.frameRate))fps")
+        logger.info("ScreenCapture updated → \(self.currentWidth)x\(self.currentHeight) @\(Int(self.currentFrameRate))fps")
+    }
+
+    /// The refresh rate of the display being captured, the most frames per second
+    /// ScreenCaptureKit can deliver from it. 60 when unknown.
+    var displayRefreshRate: Double {
+        guard let display = currentDisplay,
+              let screen = NSScreen.screens.first(where: { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID) == display.displayID })
+        else { return 60 }
+        return Double(max(60, screen.maximumFramesPerSecond))
     }
 
     /// Switch to capturing a specific window. Call after start().
@@ -320,7 +330,7 @@ final class ScreenCapture: NSObject {
         config.width = currentWidth
         config.height = currentHeight
         config.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(currentFrameRate))
-        config.queueDepth = 5
+        config.queueDepth = Harness.captureQueueDepth ?? 5
         config.pixelFormat = kCVPixelFormatType_32BGRA
         config.scalesToFit = true
         config.showsCursor = true
