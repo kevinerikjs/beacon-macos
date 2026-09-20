@@ -34,6 +34,7 @@ final class StreamSession {
     private var rtcPeer: RealtimePeer?
     private var rtcTransport: PhorosPeerTransport?
     private var rtcReady = false
+    private var rtcEverReady = false
 
     private(set) var isAuthenticated = false
 
@@ -418,12 +419,25 @@ final class StreamSession {
             guard let self else { return }
             self.stateQueue.async {
                 self.rtcReady = true
+                self.rtcEverReady = true
                 logger.info("rtc2 connected, media moves to it")
                 // The decoder on the other side starts fresh: parameter sets and a keyframe.
                 self.server?.requestKeyframeForRecovery()
             }
         }
         media.onInbound = { [weak self] inbound in self?.handleInbound(inbound, via: "rtc") }
+        // A radio stall long enough for ICE to give up must not end the session: video goes
+        // back to TCP until the link is up again, each switch starting with a keyframe.
+        media.onLinkStateChange = { [weak self] up in
+            guard let self else { return }
+            self.stateQueue.async {
+                guard self.rtcTransport != nil, self.rtcReady != up, self.rtcEverReady || up else { return }
+                self.rtcReady = up
+                self.rtcEverReady = true
+                logger.info("rtc2 link \(up ? "up: media back on it" : "down: media falls back to TCP")")
+                self.server?.requestKeyframeForRecovery()
+            }
+        }
         media.onKeyframeNeeded = { [weak self] in self?.server?.requestKeyframeForRecovery() }
         media.onTrace = transport.onTrace
         rtcPeer = peer
