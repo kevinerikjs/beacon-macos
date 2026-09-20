@@ -15,6 +15,8 @@ if [ "${SKIP_INSTALL:-0}" != 1 ]; then
     sleep 3
   done
   sleep 6   # the install tunnel's scan
+  # the first run after a new binary on either side tends not to connect at all; burn one
+  "$HERE/run-phone.sh" "${TAG}_warmup" 5 600 1080p60 >/dev/null 2>&1 || true
 fi
 pkill -x Beacon 2>/dev/null; sleep 1
 # label | Beacon env | Beam extra args

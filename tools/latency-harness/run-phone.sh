@@ -54,7 +54,7 @@ fetch_log() {
   if [ -s "$OUT/client.tmp" ]; then mv -f "$OUT/client.tmp" "$OUT/client.log"; fi
 }
 # wait for the phone to push its log (falls back to the tunnel copy if it never does)
-DEADLINE=$(( $(date +%s) + 40 + PRESSES * (INTERVAL + 200) / 1000 ))
+DEADLINE=$(( $(date +%s) + 50 + PRESSES * (INTERVAL + 200) / 1000 ))
 while [ "$(date +%s)" -lt "$DEADLINE" ]; do
   sleep 2
   if [ -s "$OUT/client.push" ] && ! kill -0 $NC_PID 2>/dev/null; then mv -f "$OUT/client.push" "$OUT/client.log"; break; fi

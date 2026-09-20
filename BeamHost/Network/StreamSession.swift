@@ -161,7 +161,11 @@ final class StreamSession {
                 lastInputSequence = sequence
                 if Harness.isEnabled { Harness.log("H2W", Int(sequence), extra: pipe) }   // the copy that won
             }
-            if Harness.isEnabled { Harness.inputReceived(report) }
+            if Harness.isEnabled {
+                // rtc2: how long ago the datagram carrying this report left the socket (H2R)
+                if pipe == "rtc", let peer = rtcPeer { Harness.log("H2R", Int(peer.sinceLastReceive())) }
+                Harness.inputReceived(report)
+            }
             gamepad.handle(report, connected: connected)
             if Harness.isEnabled { Harness.inputPosted() }
         case .control(let message):
