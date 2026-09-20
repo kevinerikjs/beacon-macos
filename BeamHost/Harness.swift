@@ -77,6 +77,8 @@ enum Harness {
     }
 
     static var captureQueueDepth: Int? { experiment["queue"].flatMap(Int.init) }
+    /// BEACON_EXP=fps=120: capture and encode at this rate instead of the preset's.
+    static func frameRate(for preset: Double) -> Double { experiment["fps"].flatMap(Double.init) ?? preset }
     /// BEACON_EXP=gop=10: seconds between periodic keyframes (default 2).
     static var keyframeInterval: Double? { experiment["gop"].flatMap(Double.init) }
 
@@ -163,7 +165,7 @@ final class HarnessFlashWindow {
         // captures this window alone (window mode), so the person can keep using the Mac and
         // whatever covers the window does not reach the capture.
         let screen = NSScreen.main ?? NSScreen.screens[0]
-        let size = NSSize(width: 1920, height: 1080)
+        let size = self.size
         let origin = NSPoint(x: screen.frame.maxX - size.width, y: screen.frame.minY)
         window = NSWindow(contentRect: NSRect(origin: origin, size: size), styleMask: [.borderless], backing: .buffered, defer: false)
         window.title = "Beam latency harness"
@@ -184,27 +186,54 @@ final class HarnessFlashWindow {
         mover.wantsLayer = true
         mover.layer?.backgroundColor = NSColor.gray.cgColor
         window.contentView?.addSubview(mover)
+        // Drive the animation from the window's display link, so every commit lands in its
+        // own refresh. A 60 Hz dispatch timer drifts against vsync and half its commits merge
+        // into the next one: ScreenCaptureKit then delivers idle frames for the merged ones.
+        displayLink = window.displayLink(target: self, selector: #selector(tick))
+        displayLink?.add(to: .main, forMode: .common)
         let t = DispatchSource.makeTimerSource(queue: .main)
-        t.schedule(deadline: .now(), repeating: 1.0 / 60.0, leeway: .milliseconds(1))
+        t.schedule(deadline: .distantFuture)
         // BEACON_EXP=load fills the bands above and below the client's centre luma patch with
         // noise that changes every frame, so the encoder works at game-like bitrates instead of
         // the ~30 kbps a black window with one moving square produces.
         if Harness.experiment["load"] != nil, let content = window.contentView {
             content.wantsLayer = true
-            let noise = HarnessFlashWindow.noiseImage(side: 256)
+            // Default: 48 px of noise stretched with linear filtering, so the bands look like
+            // smooth game-world blobs (large flat gradients, some edges). load=blocks is 8 px
+            // random blocks (nearly incompressible spatially), load=noise re-randomises every frame.
+            let mode = Harness.experiment["load"] ?? ""
+            let noise = HarnessFlashWindow.noiseImage(side: mode == "blocks" || mode == "noise" ? 256 : 48)
             for y: CGFloat in [0, size.height - 320] {
                 let layer = CALayer()
                 layer.frame = CGRect(x: 0, y: y, width: size.width, height: 320)
                 layer.contents = noise
                 layer.contentsGravity = .resize
-                layer.magnificationFilter = .nearest
+                layer.magnificationFilter = mode == "blocks" || mode == "noise" ? .nearest : .linear
                 layer.actions = ["contentsRect": NSNull()]
                 content.layer?.addSublayer(layer)
                 loadLayers.append(layer)
             }
         }
-        t.setEventHandler { [weak self] in
-            guard let self else { return }
+        t.setEventHandler {}
+        t.resume()
+        moverTimer = t
+        GCController.shouldMonitorBackgroundEvents = true
+
+        let center = NotificationCenter.default
+        observers.append(center.addObserver(forName: .GCControllerDidConnect, object: nil, queue: .main) { [weak self] n in
+            if let c = n.object as? GCController { self?.attach(c) }
+        })
+        GCController.controllers().forEach(attach)
+    }
+
+    private var displayLink: CADisplayLink?
+    private let size = NSSize(width: 1920, height: 1080)
+
+    private var ticks = 0
+    @objc private func tick() {
+        ticks += 1
+        if ticks % 60 == 0 { Harness.log("TICK", ticks) }
+        do {
             moverX = (moverX + 8).truncatingRemainder(dividingBy: size.width - 24)
             mover.frame.origin = CGPoint(x: moverX, y: 8)
             if !loadLayers.isEmpty {
@@ -222,15 +251,6 @@ final class HarnessFlashWindow {
                 CATransaction.commit()
             }
         }
-        t.resume()
-        moverTimer = t
-        GCController.shouldMonitorBackgroundEvents = true
-
-        let center = NotificationCenter.default
-        observers.append(center.addObserver(forName: .GCControllerDidConnect, object: nil, queue: .main) { [weak self] n in
-            if let c = n.object as? GCController { self?.attach(c) }
-        })
-        GCController.controllers().forEach(attach)
     }
 
     private static func noiseImage(side: Int) -> CGImage? {

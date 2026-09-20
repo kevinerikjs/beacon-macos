@@ -119,7 +119,7 @@ link.onFrame = { frame in
         switch packet.header.type {
         case .video, .videoKeyframe:
             guard let header = VideoFragmentHeader.parse(from: packet.payload) else { return }
-            _ = header
+            if header.fragmentIndex == 0 { log("H7R", Int(header.frameNumber)) }
             decodeQueue.async {
                 if let assembled = assembler.receive(packet.payload, isKeyframe: packet.header.type == .videoKeyframe) {
                     framesReceived += 1

@@ -55,10 +55,14 @@ final class HostVideoEncoder {
             if Harness.isEnabled { Harness.log("H5E", Int(pts.microseconds), extra: "\(data.count),\(isKeyframe ? 1 : 0)") }
             self.delegate?.videoEncoder(self, didEncodeFrame: data, presentationTime: pts, isKeyframe: isKeyframe)
         }
+        encoder.onFrameDropped = {
+            if Harness.isEnabled { Harness.log("H5D", 0) }
+        }
         encoder.onError = { status in
             // Never swallow this: a failed restart leaves the pipeline running with no encoder,
             // which reaches the user as a permanently black stream and nothing in the log.
             logger.error("VideoEncoder error (OSStatus \(status))")
+            if Harness.isEnabled { Harness.log("H5X", Int(status)) }
         }
     }
 
@@ -99,7 +103,7 @@ final class HostVideoEncoder {
         encoder.reconfigure {
             $0.width = Int32(frameSize?.width ?? CGFloat(preset.width))
             $0.height = Int32(frameSize?.height ?? CGFloat(preset.height))
-            $0.frameRate = preset.frameRate
+            $0.frameRate = Harness.frameRate(for: preset.frameRate)
             $0.bitrateBitsPerSecond = Int(preset.bitrateMbps * 1_000_000)
         }
     }

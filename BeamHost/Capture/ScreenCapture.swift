@@ -212,7 +212,7 @@ final class ScreenCapture: NSObject {
         guard let stream else { return }
         presetWidth = preset.width
         presetHeight = preset.height
-        currentFrameRate = preset.frameRate
+        currentFrameRate = Harness.frameRate(for: preset.frameRate)
         applyFrameSize(frameSize(for: currentWindow, lock: sourceLockedViewport))
         try await stream.updateConfiguration(makeConfiguration(captureAudio: true))
         logger.info("ScreenCapture updated → \(self.currentWidth)x\(self.currentHeight) @\(Int(preset.frameRate))fps")

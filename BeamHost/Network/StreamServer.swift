@@ -116,7 +116,7 @@ final class StreamServer {
         videoEncoder = HostVideoEncoder(
             width: Int32(preset.width),
             height: Int32(preset.height),
-            frameRate: preset.frameRate,
+            frameRate: Harness.frameRate(for: preset.frameRate),
             bitrateMbps: preset.bitrateMbps
         )
         audioEncoder = HostAudioEncoder()
@@ -516,7 +516,7 @@ final class StreamServer {
                 display: display,
                 width: preset.width,
                 height: preset.height,
-                frameRate: preset.frameRate,
+                frameRate: Harness.frameRate(for: preset.frameRate),
                 initialWindow: resolvedPendingWindow,
                 initialLockedViewport: pendingLockedViewportRect
             )
@@ -765,7 +765,10 @@ extension StreamServer: ScreenCaptureDelegate {
         lastVideoInputFrameAt = Date()
         if Harness.isEnabled {
             // H5: the frame's capture time (SCK stamps PTS on the host clock) and when it reached us.
-            Harness.log("H5", Int(CMSampleBufferGetPresentationTimeStamp(frame).microseconds), extra: "")
+            let attachments = CMSampleBufferGetSampleAttachmentsArray(frame, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]]
+            let status = (attachments?.first?[.status] as? Int).flatMap(SCFrameStatus.init) ?? .idle
+            let hasPixels = CMSampleBufferGetImageBuffer(frame) != nil
+            Harness.log(hasPixels ? "H5" : "H5I", Int(CMSampleBufferGetPresentationTimeStamp(frame).microseconds), extra: "\(status.rawValue)")
         }
         if Harness.experiment["nogate"] == nil {
             // Skip the frame when no session can take it. The encoder never sees it, so no

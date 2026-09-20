@@ -66,6 +66,39 @@ final class StreamSession {
     private var probeTimer: DispatchSourceTimer?
     private var probe = RoundTripProbe(staleAfter: 1)
     private var bitrate = BitrateController(maximum: 6_000_000)
+    /// A ping sent before this time waited behind a keyframe. Its round trip measures the
+    /// keyframe, not the link, and must not make the controller cut the bitrate.
+    private var keyframeBurstUntil = Date.distantPast
+    private var pingSentAt = Date.distantPast
+    /// Bytes handed to the kernel so far (completions), and the last link-rate sample.
+    private var bytesAccepted = 0
+    private var lastLinkSample: (at: Date, accepted: Int, unacked: Int)?
+    private var linkRate: Double = 0
+    private var holdRetryScheduled = false
+
+    /// Reads the bytes the kernel holds unacknowledged for this connection into the
+    /// scheduler. TCP's send buffer grows to megabytes on a slow link and a write completes
+    /// as soon as the kernel takes it, so without this the scheduler sees an empty queue
+    /// while seconds of video wait below it.
+    private func refreshTransportBacklog() {
+        guard Harness.experiment["nokq"] == nil,
+              let tcp = link.connection.metadata(definition: NWProtocolTCP.definition) as? NWProtocolTCP.Metadata else { return }
+        scheduler.transportBacklog = Int(tcp.availableSendBuffer)
+    }
+
+    /// Link rate from what the kernel accepted minus what it still holds, sampled on the
+    /// probe timer while the buffer is non-empty (a link-limited window).
+    private func sampleLinkRate(now: Date) {
+        let unacked = scheduler.transportBacklog
+        defer { lastLinkSample = (now, bytesAccepted, unacked) }
+        guard let last = lastLinkSample, last.unacked > 0 else { return }
+        let drained = (bytesAccepted - last.accepted) - (unacked - last.unacked)
+        let dt = now.timeIntervalSince(last.at)
+        guard drained > 0, dt > 0.05 else { return }
+        let sample = Double(drained) / dt
+        linkRate = linkRate == 0 ? sample : linkRate * 0.7 + sample * 0.3
+        scheduler.reportDrainRate(linkRate)
+    }
     private var lastDropLogAt = Date.distantPast
 
     private let stateQueue = DispatchQueue(label: "com.beam.session.state", qos: .userInteractive)
@@ -252,6 +285,10 @@ final class StreamSession {
             // heartbeat.heard() already ran for this frame. The round trip of this pong is
             // the link's queueing delay: the ping waited behind every queued video byte.
             if let rtt = probe.receivedPong() {
+                guard pingSentAt > keyframeBurstUntil else {
+                    if Harness.isEnabled { Harness.log("RTTK", Int(rtt * 1_000_000)) }
+                    break
+                }
                 bitrate.observe(roundTrip: rtt)
                 if Harness.isEnabled { Harness.log("RTT", Int(rtt * 1_000_000), extra: "\(Int(bitrate.queueDelay * 1_000_000)),\(bitrate.current)") }
                 if let next = bitrate.evaluate() {
@@ -349,12 +386,21 @@ final class StreamSession {
         stateQueue.async { [self] in
             bitrate.setMaximum(bitsPerSecond)
             wantedBitrate = bitrate.current
+            // The controller starts a new link below the ceiling and climbs; the encoder
+            // has to start there too.
+            server?.session(self, wantsBitrate: bitrate.current)
         }
     }
 
     /// Whether the transport has room for another encoded frame. Read from the capture
     /// thread before the encode, so a frame the link cannot take is skipped for free.
-    var acceptsVideoFrame: Bool { stateQueue.sync { !isAuthenticated || hold.isHeld || scheduler.shouldEncodeVideo() } }
+    var acceptsVideoFrame: Bool {
+        stateQueue.sync {
+            guard isAuthenticated, !hold.isHeld else { return true }
+            refreshTransportBacklog()
+            return scheduler.shouldEncodeVideo()
+        }
+    }
 
     /// Pings the client five times a second while streaming. The reply's round trip feeds
     /// the bitrate controller; the client already answers pings for its own probe.
@@ -364,6 +410,12 @@ final class StreamSession {
         timer.schedule(deadline: .now() + 0.2, repeating: 0.2, leeway: .milliseconds(5))
         timer.setEventHandler { [weak self] in
             guard let self, self.isAuthenticated, !self.hold.isHeld, self.probe.shouldSend() else { return }
+            self.pingSentAt = Date()
+            self.refreshTransportBacklog()
+            self.sampleLinkRate(now: self.pingSentAt)
+            if Harness.isEnabled {
+                Harness.log("SNDBUF", self.scheduler.transportBacklog, extra: "\(self.scheduler.backlog.total),\(self.scheduler.queuedVideo.bytes),\(Int(self.scheduler.drainRate)),\(self.scheduler.videoByteBudget)")
+            }
             self.sendControl(.ping)
         }
         timer.resume()
@@ -408,7 +460,12 @@ final class StreamSession {
             let packets = VideoFragmentHeader.fragment(
                 videoData, frameNumber: frameNumber, presentationTimestamp: pts.microseconds, maximumPayloadLength: kMaxMediaPayload
             ).map { Packet.encode(isKeyframe ? .videoKeyframe : .video, payload: $0).lengthPrefixed() }
-            scheduler.enqueueVideoFrame(packets, isKeyframe: isKeyframe)
+            scheduler.enqueueVideoFrame(packets, isKeyframe: isKeyframe, tag: Int(frameNumber) + 1)
+            if isKeyframe {
+                let bytes = Double(packets.reduce(0) { $0 + $1.count })
+                let seconds = scheduler.drainRate > 0 ? bytes / scheduler.drainRate : 0.2
+                keyframeBurstUntil = Date().addingTimeInterval(min(2, max(0.1, seconds * 1.5)))
+            }
             drain()
             if Harness.isEnabled { Harness.log("H6", Int(frameNumber), extra: "\(pts.microseconds),\(videoData.count)") }
         }
@@ -459,11 +516,26 @@ final class StreamSession {
             // until the next keyframe. Ask for one now instead of waiting up to two seconds.
             if scheduler.needsKeyframe { server?.requestKeyframeForRecovery() }
         }
+        refreshTransportBacklog()
+        defer {
+            // Video held back by the transport backlog has nothing to wake it: retry shortly.
+            if scheduler.queuedVideo.frames > 0, !holdRetryScheduled {
+                holdRetryScheduled = true
+                stateQueue.asyncAfter(deadline: .now() + .milliseconds(4)) { [weak self] in
+                    guard let self else { return }
+                    self.holdRetryScheduled = false
+                    self.drain()
+                }
+            }
+        }
         while let write = scheduler.dequeue() {
+            if Harness.isEnabled, write.tag > 0 { Harness.log("H6D", write.tag - 1, extra: "\(scheduler.transportBacklog)") }
             link.connection.send(content: write.data, completion: .contentProcessed { [weak self] error in
                 guard let self else { return }
                 self.stateQueue.async {
+                    if Harness.isEnabled, write.tag > 0 { Harness.log("H6C", write.tag - 1) }
                     self.scheduler.completed(write)
+                    self.bytesAccepted += write.data.count
                     if let error {
                         logger.error("TCP send error: \(error)")
                         self.disconnect()
