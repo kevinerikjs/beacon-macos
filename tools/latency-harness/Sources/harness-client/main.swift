@@ -46,7 +46,12 @@ func stderr(_ s: String) { FileHandle.standardError.write((s + "\n").data(using:
 // MARK: - Connection
 
 let secret = SharedSecret(hex: "5e1f2a9c4d7b3e6a8f0c1d2e3b4a5968778695a4b3c2d1e0f1e2d3c4b5a69788")!
-let capabilities = ClientCapabilities(deviceName: "Harness", deviceID: "harness-client", audioCodecs: [.pcmFloat32], videoCodecs: [.h264], wantsAudio: false)
+// HARNESS_MAX_FPS: what a real client advertises as its display refresh (Beam sends its
+// screen's). Unset = no field, the pre-1.4 client, and the host stays at the preset's rate.
+let maximumFrameRate = ProcessInfo.processInfo.environment["HARNESS_MAX_FPS"].flatMap(Double.init)
+let capabilities = ClientCapabilities(deviceName: "Harness", deviceID: "harness-client", audioCodecs: [.pcmFloat32], videoCodecs: [.h264], wantsAudio: false, maximumFrameRate: maximumFrameRate)
+var clock = ClockSync()
+func nowMicros() -> Int64 { let t = CMClockGetTime(CMClockGetHostTimeClock()); return Int64(Double(t.value) * 1_000_000 / Double(t.timescale)) }
 let params = PhorosConnection.parameters()
 let port = NWEndpoint.Port(rawValue: UInt16(ProcessInfo.processInfo.environment["HARNESS_PORT"] ?? "7979") ?? 7979)!
 let link = PhorosConnection(to: NWEndpoint.hostPort(host: "127.0.0.1", port: port), parameters: params)
@@ -56,6 +61,7 @@ var assembler = FrameAssembler()
 var formatDescription: CMVideoFormatDescription?
 var decoder: VTDecompressionSession?
 var lastLuma: Double = -1
+var clockTimer: DispatchSourceTimer?
 var flipCount = 0
 var framesReceived = 0
 var framesDecoded = 0
@@ -124,6 +130,9 @@ link.onFrame = { frame in
                 if let assembled = assembler.receive(packet.payload, isKeyframe: packet.header.type == .videoKeyframe) {
                     framesReceived += 1
                     log("H7", Int(assembled.frameNumber), extra: "\(assembled.presentationTimestamp),\(assembled.bitstream.count)")
+                    if let age = clock.age(ofPresentationTimestamp: assembled.presentationTimestamp, now: nowMicros()) {
+                        log("A", Int(assembled.frameNumber), extra: "\(age)")   // frame age at assembly, host capture → here
+                    }
                     decode(assembled)
                 }
             }
@@ -145,8 +154,15 @@ func handleJSON(_ data: Data) {
         switch PairingClient.interpret(pairing) {
         case .authenticated(let host, _, _, _):
             authenticated = true
-            stderr("authenticated; host supportsControllerInput=\(host.supportsControllerInput)")
+            stderr("authenticated; host supportsControllerInput=\(host.supportsControllerInput) clockSync=\(host.supportsClockSync) maxFps=\(maximumFrameRate.map { String(Int($0)) } ?? "-")")
             sendControl(.qualityRequest(preset))
+            if host.supportsClockSync {
+                // Probe like Beam will: 4 Hz, offset from the shortest recent round trip.
+                let t = DispatchSource.makeTimerSource(queue: .main)
+                t.schedule(deadline: .now() + 0.5, repeating: 0.25)
+                t.setEventHandler { sendControl(.clockProbe(clock.probe(now: nowMicros()))) }
+                t.resume(); clockTimer = t
+            }
             startController()
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { startPresses() }
         case .failed(let reason): stderr("auth failed: \(reason)"); exit(3)
@@ -155,6 +171,10 @@ func handleJSON(_ data: Data) {
         return
     }
     if let control = try? JSONDecoder().decode(ControlMessage.self, from: data) {
+        if case .clockReply(let reply) = control, let rtt = clock.reply(reply, now: nowMicros()) {
+            // C: one clock sample (id = rtt µs, extra = offset µs, best rtt µs)
+            log("C", Int(rtt), extra: "\(clock.offset ?? 0),\(clock.bestRoundTrip ?? 0)")
+        }
         if case .ping = control { sendControl(.pong) }
     }
 }

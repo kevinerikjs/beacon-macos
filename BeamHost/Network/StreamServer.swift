@@ -259,6 +259,9 @@ final class StreamServer {
             // H.264-only while others were on HEVC). refreshVideoCodec reconfigures and clears
             // the stale cache in that case, so the resend below is never a wrong-codec blob.
             refreshVideoCodec()
+            // And it may raise or lower the capture rate: a 120 Hz client alone gets 120,
+            // a 60 Hz client joining brings it back to 60.
+            refreshFrameRate()
 
             // Send cached parameter sets so the new client can decode immediately, then force an
             // IDR so it doesn't have to wait up to 2 seconds for the next keyframe.
@@ -285,7 +288,7 @@ final class StreamServer {
         logger.info("Session disconnected: \(session.id). Active sessions: \(remaining)")
         refreshAACOutputEnabled()
         // A departing H.264-only client may let the remaining sessions upgrade to HEVC.
-        if remaining > 0 { refreshVideoCodec() }
+        if remaining > 0 { refreshVideoCodec(); refreshFrameRate() }
 
         if remaining == 0 {
             stopCaptureWatchdog()
@@ -405,6 +408,31 @@ final class StreamServer {
         logger.info("Quality broadcast → \(preset.rawValue)")
     }
 
+    /// The rate to capture and encode at for `preset`: the preset's own rate, raised toward
+    /// the display's refresh rate when every connected client asked for more (a client that
+    /// did not ask gets 60, as before; the lowest request wins so nobody decodes more than
+    /// it wanted). The harness `fps=` switch overrides everything.
+    func negotiatedFrameRate(for preset: QualityPreset) -> Double {
+        if Harness.experiment["fps"] != nil { return Harness.frameRate(for: preset.frameRate) }
+        let sessions = sessionsQueue.sync { Array(activeSessions.values).filter(\.isAuthenticated) }
+        guard !sessions.isEmpty else { return preset.frameRate }
+        let refresh = screenCapture.displayRefreshRate
+        return sessions.map {
+            PeerCapabilities(PairingMessage(type: .authRequest, maximumFrameRate: $0.maximumFrameRate))
+                .videoFrameRate(preset: preset.frameRate, hostRefreshRate: refresh)
+        }.min() ?? preset.frameRate
+    }
+
+    /// Re-applies the negotiated frame rate after a client joined or left.
+    private func refreshFrameRate() {
+        let preset = qualityManager.activePreset
+        let rate = negotiatedFrameRate(for: preset)
+        guard rate != screenCapture.currentFrameRate else { return }
+        logger.info("Frame rate → \(Int(rate)) fps (preset \(preset.rawValue), display \(Int(self.screenCapture.displayRefreshRate)) Hz)")
+        videoEncoder.reconfigure(frameRate: rate)
+        Task { try? await screenCapture.updateConfiguration(preset: preset, frameRate: rate) }
+    }
+
     /// A session's bitrate controller moved. The shared encoder runs at the lowest rate any
     /// session wants: a fast link waiting on a slow one is better than a slow link that
     /// never catches up.
@@ -422,7 +450,8 @@ final class StreamServer {
 
     private func applyQualityPreset(_ preset: QualityPreset) {
         // Keep the window's aspect across quality changes (BEAM-38).
-        videoEncoder.reconfigure(preset: preset, frameSize: screenCapture.frameSize(for: pendingWindowSelection, preset: preset, lock: screenCapture.sourceLockedViewport))
+        let frameRate = negotiatedFrameRate(for: preset)
+        videoEncoder.reconfigure(preset: preset, frameSize: screenCapture.frameSize(for: pendingWindowSelection, preset: preset, lock: screenCapture.sourceLockedViewport), frameRate: frameRate)
         sessionsQueue.sync { Array(activeSessions.values) }.forEach { $0.setMaximumBitrate(Int(preset.bitrateMbps * 1_000_000)) }
         // The preset is the only signal the host has for "constrained link", and the auto
         // tiering drives it down on exactly those links. Bitrate is settable live, so this
@@ -431,7 +460,7 @@ final class StreamServer {
             AudioCodecID.aacBitrate(for: preset, channels: currentAudioFormat?.channels ?? 2)
         )
         Task {
-            try? await screenCapture.updateConfiguration(preset: preset)
+            try? await screenCapture.updateConfiguration(preset: preset, frameRate: frameRate)
             broadcastQualityChanged(preset)
         }
         logger.info("Applying quality preset: \(preset.rawValue)")
@@ -516,7 +545,7 @@ final class StreamServer {
                 display: display,
                 width: preset.width,
                 height: preset.height,
-                frameRate: Harness.frameRate(for: preset.frameRate),
+                frameRate: negotiatedFrameRate(for: preset),
                 initialWindow: resolvedPendingWindow,
                 initialLockedViewport: pendingLockedViewportRect
             )

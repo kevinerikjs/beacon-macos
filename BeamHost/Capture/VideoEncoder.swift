@@ -99,13 +99,18 @@ final class HostVideoEncoder {
     /// Restart with the given preset. `frameSize` overrides the preset's dimensions when the
     /// capture frame follows a window's aspect (BEAM-38); fps and bitrate still come from the
     /// preset. Fresh parameter sets and an IDR follow on the next encoded frame.
-    func reconfigure(preset: QualityPreset, frameSize: CGSize? = nil) {
+    func reconfigure(preset: QualityPreset, frameSize: CGSize? = nil, frameRate: Double? = nil) {
         encoder.reconfigure {
             $0.width = Int32(frameSize?.width ?? CGFloat(preset.width))
             $0.height = Int32(frameSize?.height ?? CGFloat(preset.height))
-            $0.frameRate = Harness.frameRate(for: preset.frameRate)
+            $0.frameRate = frameRate ?? Harness.frameRate(for: preset.frameRate)
             $0.bitrateBitsPerSecond = Int(preset.bitrateMbps * 1_000_000)
         }
+    }
+
+    /// Restart at a new frame rate, keeping everything else (a client asked for more or less).
+    func reconfigure(frameRate: Double) {
+        encoder.reconfigure { $0.frameRate = frameRate }
     }
 
     /// Restart on a new codec, keeping dimensions and bitrate. Used when the negotiated codec

@@ -28,7 +28,7 @@ final class StreamSession {
     private let link: PhorosConnection
     private weak var server: StreamServer?
 
-    private var isAuthenticated = false
+    private(set) var isAuthenticated = false
 
     /// Codec this session's client can actually decode. Defaults to .pcmFloat32 and is only
     /// ever raised by an explicit advertisement in this connection's authRequest. It is a
@@ -42,6 +42,8 @@ final class StreamSession {
     /// Whether this client wants audio at all (BEAM-34). Set from `wantsAudio` at auth and
     /// flipped by `audio_enable_request` mid-session. Per-connection, like the codecs.
     private(set) var wantsAudio = true
+    /// The client's `maximumFrameRate`, or nil for the preset's own rate.
+    private(set) var maximumFrameRate: Double?
 
     private(set) var authenticatedDeviceID: String?
     private var isTerminated = false
@@ -236,6 +238,7 @@ final class StreamSession {
             negotiatedAudioCodec = session.audioCodec
             negotiatedVideoCodec = session.videoCodec
             wantsAudio = session.peer.wantsAudio
+            maximumFrameRate = session.peer.maximumFrameRate
             scheduler.policy = Harness.sendPolicy(base: session.audioCodec == .pcmFloat32 ? .pcmAudio : SendPolicy())
             isAuthenticated = true
             authenticatedDeviceID = session.deviceID
@@ -258,7 +261,8 @@ final class StreamSession {
             supportsAudioToggle: true,
             supportsWindowSelection: true,
             controls: PhoneControlsStore.shared.wireControls(),
-            supportsControllerInput: ControllerPassthrough.isEnabled
+            supportsControllerInput: ControllerPassthrough.isEnabled,
+            supportsClockSync: true
         )
     }
 
@@ -299,6 +303,14 @@ final class StreamSession {
             }
         case .ping:
             sendControl(.pong)
+        case .clockProbe(let probe):
+            // Both host times on the clock video timestamps use, so the client can turn a
+            // frame's presentation timestamp into an age.
+            let received = CMClockGetTime(CMClockGetHostTimeClock()).microseconds
+            sendControl(.clockReply(ClockReply(id: probe.id, sentAt: probe.sentAt, receivedAt: received,
+                                               repliedAt: CMClockGetTime(CMClockGetHostTimeClock()).microseconds)))
+        case .clockReply:
+            break  // a host never sends probes
         case .videoPause:
             // Connection warm-up (BEAM-33): hold video so Tailscale's path discovery can
             // finish, keep audio flowing. Queued video is stale by the time it resumes.
