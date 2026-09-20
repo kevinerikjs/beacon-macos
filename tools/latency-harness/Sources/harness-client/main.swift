@@ -19,6 +19,7 @@ import GameController
 import Network
 import Phoros
 import PhorosInput
+import PhorosCore
 import PhorosMedia
 import PhorosNetwork
 import PhorosSession
@@ -173,12 +174,44 @@ func handleJSON(_ data: Data) {
         return
     }
     if let control = try? JSONDecoder().decode(ControlMessage.self, from: data) {
+        if case .transportOffer(let offer) = control, offer.kind == "rtc2" { acceptRTC(offer) }
         if case .clockReply(let reply) = control, let rtt = clock.reply(reply, now: nowMicros()) {
             // C: one clock sample (id = rtt µs, extra = offset µs, best rtt µs)
             log("C", Int(rtt), extra: "\(clock.offset ?? 0),\(clock.bestRoundTrip ?? 0)")
         }
         if case .ping = control { sendControl(.pong) }
     }
+}
+
+// MARK: - rtc2 (BEAM-54): accept the host's UDP offer, take media and send input on it
+
+var rtcPeer: RealtimePeer?
+var rtcTransport: PhorosPeerTransport?
+var rtcReady = false
+func acceptRTC(_ offer: TransportOffer) {
+    let address = "127.0.0.1:7982"
+    guard let peer = RealtimePeer(isHost: false, localAddress: address) else { stderr("rtc2: peer creation failed"); return }
+    let media = PhorosPeerTransport(peer: peer, queue: decodeQueue)
+    media.onReady = { rtcReady = true; stderr("rtc2 connected"); log("RTC", 1) }
+    media.onInbound = { inbound in
+        switch inbound {
+        case .video(let assembled):
+            framesReceived += 1
+            log("H7", Int(assembled.frameNumber), extra: "\(assembled.presentationTimestamp),\(assembled.bitstream.count)")
+            if let age = clock.age(ofPresentationTimestamp: assembled.presentationTimestamp, now: nowMicros()) { log("A", Int(assembled.frameNumber), extra: "\(age)") }
+            decode(assembled)
+        case .videoParameterSets(let sets, let codec):
+            guard let description = VideoFormat.makeDescription(parameterSets: sets, codec: codec) else { return }
+            formatDescription = description; makeDecoder(description); stderr("parameter sets (rtc2): \(codec.wireName)")
+        default: break
+        }
+    }
+    rtcPeer = peer
+    rtcTransport = media
+    guard peer.runOwnSocket() == 0 else { stderr("rtc2: bind failed"); return }
+    peer.setRemote(info: offer.info, address: offer.address, nowMicros: 0)
+    sendControl(.transportAnswer(TransportOffer(kind: "rtc2", address: address, info: peer.localInfo)))
+    stderr("rtc2 answered \(offer.address)")
 }
 
 // MARK: - Controller (the harness pad, DualShock 4 identity, forwarded like Beam does)
@@ -193,7 +226,8 @@ func startController() {
     sampler.onReport = { report, connected in
         let a = report.buttons.contains(.a)
         if a != lastA { lastA = a; inputTransitions += 1; log("H1", inputTransitions, extra: a ? "down" : "up") }
-        link.send(Packet.encode(.input, flags: connected ? ControllerReport.connectedFlag : 0, payload: report.serialized()))
+        if rtcReady, let rtcTransport { rtcTransport.sendInput(report, connected: connected) }
+        else { link.send(Packet.encode(.input, flags: connected ? ControllerReport.connectedFlag : 0, payload: report.serialized())) }
     }
     sampler.start()
 }

@@ -6,6 +6,7 @@ let package = Package(
     platforms: [.macOS(.v13)],
     dependencies: [
         .package(path: "../../../phoros"),
+        .package(path: "../../../phoros/Core"),
     ],
     targets: [
         .executableTarget(
@@ -16,6 +17,7 @@ let package = Package(
                 .product(name: "PhorosNetwork", package: "phoros"),
                 .product(name: "PhorosMedia", package: "phoros"),
                 .product(name: "PhorosInput", package: "phoros"),
+                .product(name: "PhorosCore", package: "Core"),
             ]
         ),
     ]

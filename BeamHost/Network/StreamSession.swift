@@ -17,6 +17,7 @@ import Phoros
 import PhorosInput
 import PhorosNetwork
 import PhorosSession
+import PhorosCore
 
 private let logger = Logger(subsystem: "com.beam.beacon", category: "StreamSession")
 
@@ -26,6 +27,13 @@ final class StreamSession {
 
     private let transport: PhorosLegacyTransport
     private weak var server: StreamServer?
+
+    /// Experimental second transport (BEACON_EXP=rtc, BEAM-54): ICE, DTLS and SCTP over
+    /// UDP through PhorosCore. Offered after authentication; once it connects, media and
+    /// input move to it and control stays on TCP.
+    private var rtcPeer: RealtimePeer?
+    private var rtcTransport: PhorosPeerTransport?
+    private var rtcReady = false
 
     private(set) var isAuthenticated = false
 
@@ -127,6 +135,7 @@ final class StreamSession {
         heartbeatTimer?.cancel()
         heartbeatTimer = nil
         gamepad.release()
+        rtcTransport?.cancel()
         transport.cancel()
         logger.info("Session \(self.id) disconnected")
     }
@@ -217,6 +226,7 @@ final class StreamSession {
 
             let deviceName = pairedDevices.first { $0.id == session.deviceID }?.name ?? session.deviceID
             server?.sessionAuthenticated(self, deviceName: deviceName)
+            if Harness.experiment["rtc"] != nil { offerRTC() }
             logger.info("Session authenticated for device '\(deviceName)' — audio \(self.wantsAudio ? self.negotiatedAudioCodec.wireName : "off"), video \(self.negotiatedVideoCodec.wireName)")
         }
     }
@@ -258,6 +268,12 @@ final class StreamSession {
             MediaKeyDispatcher.send(command)
         case .pong, .ping:
             break  // the transport measures the round trip and answers pings
+        case .transportOffer:
+            break  // a host never receives offers
+        case .transportAnswer(let answer):
+            guard answer.kind == "rtc2", let peer = rtcPeer else { return }
+            logger.info("rtc2 answer from \(answer.address)")
+            peer.setRemote(info: answer.info, address: answer.address, nowMicros: 0)
         case .clockProbe(let probe):
             // Both host times on the clock video timestamps use, so the client can turn a
             // frame's presentation timestamp into an age.
@@ -356,7 +372,7 @@ final class StreamSession {
     /// thread before the encode, so a frame the link cannot take is skipped for free.
     var acceptsVideoFrame: Bool {
         guard isAuthenticated, !hold.isHeld else { return true }
-        return transport.acceptsVideoFrame
+        return media.acceptsVideoFrame
     }
 
     /// The heartbeat timeout is Beacon's policy; the packets themselves come from the transport.
@@ -375,16 +391,52 @@ final class StreamSession {
         heartbeatTimer = timer
     }
 
+    // MARK: - rtc2 (experimental)
+
+    /// Binds a UDP peer on the interface this client reached us on and offers it.
+    private func offerRTC() {
+        var host = "127.0.0.1"
+        if let local = transport.link.connection.currentPath?.localEndpoint, case .hostPort(let h, _) = local {
+            host = "\(h)".split(separator: "%").first.map(String.init) ?? host
+        }
+        let address = "\(host):7981"
+        guard let peer = RealtimePeer(isHost: true, localAddress: address) else { return }
+        let media = PhorosPeerTransport(peer: peer, queue: stateQueue)
+        media.onReady = { [weak self] in
+            guard let self else { return }
+            self.stateQueue.async {
+                self.rtcReady = true
+                logger.info("rtc2 connected, media moves to it")
+                // The decoder on the other side starts fresh: parameter sets and a keyframe.
+                self.server?.requestKeyframeForRecovery()
+            }
+        }
+        media.onInbound = { [weak self] inbound in self?.handleInbound(inbound) }
+        media.onKeyframeNeeded = { [weak self] in self?.server?.requestKeyframeForRecovery() }
+        media.onTrace = transport.onTrace
+        rtcPeer = peer
+        rtcTransport = media
+        guard peer.runOwnSocket() == 0 else { rtcPeer = nil; rtcTransport = nil; return }
+        transport.sendControl(.transportOffer(TransportOffer(kind: "rtc2", address: address, info: peer.localInfo)))
+        logger.info("rtc2 offered at \(address)")
+    }
+
     // MARK: - Send Video
 
     func send(spsPps data: Data, codec: VideoCodecID) {
         guard isAuthenticated else { return }
-        transport.sendVideoParameterSets(data, codec: codec)
+        media.sendVideoParameterSets(data, codec: codec)
     }
 
     func send(videoData: Data, pts: CMTime, isKeyframe: Bool) {
         guard isAuthenticated, !hold.isHeld else { return }
-        transport.sendVideo(videoData, presentationTimestamp: pts.microseconds, isKeyframe: isKeyframe)
+        media.sendVideo(videoData, presentationTimestamp: pts.microseconds, isKeyframe: isKeyframe)
+    }
+
+    /// The transport carrying media right now: rtc2 once it is connected, TCP otherwise.
+    private var media: PhorosRealtimeTransport {
+        if rtcReady, let rtcTransport { return rtcTransport }
+        return transport
     }
 
     // MARK: - Send Audio
@@ -394,6 +446,6 @@ final class StreamSession {
         // sessions that negotiated it, but a fan-out bug must never be able to put AAC
         // bytes on a legacy wire: that is white noise into someone's headphones.
         guard isAuthenticated, wantsAudio, codec == negotiatedAudioCodec else { return }
-        transport.sendAudio(audioData, codec: codec, presentationTimestamp: pts.microseconds)
+        media.sendAudio(audioData, codec: codec, presentationTimestamp: pts.microseconds)
     }
 }
