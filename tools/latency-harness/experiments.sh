@@ -8,7 +8,7 @@ PRESSES="$1"; shift
 DIRS=()
 for spec in "$@"; do
   label="${spec%%:*}"; exp="${spec#*:}"
-  out=$(BEACON_EXP="$exp" SHAPE="${SHAPE:-}" HARNESS_MAX_FPS="${HARNESS_MAX_FPS:-}" "$HERE/run.sh" "$label" "$PRESSES" 600 1080p60 2>/dev/null | tail -1)
+  out=$(BEACON_EXP="$exp" SHAPE="${SHAPE:-}" HARNESS_MAX_FPS="${HARNESS_MAX_FPS:-}" HARNESS_CODEC="${HARNESS_CODEC:-}" "$HERE/run.sh" "$label" "$PRESSES" 600 "${PRESET:-1080p60}" 2>/dev/null | tail -1)
   DIRS+=("$out")
 done
 python3 - "${DIRS[@]}" <<'PY'

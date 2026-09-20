@@ -49,7 +49,9 @@ let secret = SharedSecret(hex: "5e1f2a9c4d7b3e6a8f0c1d2e3b4a5968778695a4b3c2d1e0
 // HARNESS_MAX_FPS: what a real client advertises as its display refresh (Beam sends its
 // screen's). Unset = no field, the pre-1.4 client, and the host stays at the preset's rate.
 let maximumFrameRate = ProcessInfo.processInfo.environment["HARNESS_MAX_FPS"].flatMap(Double.init)
-let capabilities = ClientCapabilities(deviceName: "Harness", deviceID: "harness-client", audioCodecs: [.pcmFloat32], videoCodecs: [.h264], wantsAudio: false, maximumFrameRate: maximumFrameRate)
+// HARNESS_CODEC=hevc advertises HEVC first, as Beam does; default H.264.
+let videoCodecs: [VideoCodecID] = ProcessInfo.processInfo.environment["HARNESS_CODEC"] == "hevc" ? [.hevc, .h264] : [.h264]
+let capabilities = ClientCapabilities(deviceName: "Harness", deviceID: "harness-client", audioCodecs: [.pcmFloat32], videoCodecs: videoCodecs, wantsAudio: false, maximumFrameRate: maximumFrameRate)
 var clock = ClockSync()
 func nowMicros() -> Int64 { let t = CMClockGetTime(CMClockGetHostTimeClock()); return Int64(Double(t.value) * 1_000_000 / Double(t.timescale)) }
 let params = PhorosConnection.parameters()
