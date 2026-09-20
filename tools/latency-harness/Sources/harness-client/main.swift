@@ -222,4 +222,8 @@ func startPresses() {
 }
 
 link.start()
+// A run that never authenticates must not hang the batch.
+DispatchQueue.main.asyncAfter(deadline: .now() + 15) {
+    if !authenticated { stderr("no authentication within 15 s"); exit(4) }
+}
 RunLoop.main.run()

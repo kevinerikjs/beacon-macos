@@ -17,7 +17,8 @@ SHAPER_PID=""
 if [ -n "${SHAPE:-}" ]; then
   # SHAPE="--down-mbps 8 --delay-ms 5"
   python3 "$HERE/shaper.py" --listen 7980 --target 7979 $SHAPE >"$OUT/shaper.log" 2>&1 &
-  SHAPER_PID=$!; sleep 0.5
+  SHAPER_PID=$!
+  for i in $(seq 1 20); do nc -z 127.0.0.1 7980 2>/dev/null && break; sleep 0.25; done
   export HARNESS_PORT=7980
 fi
 "$HERE/.build/release/harness-client" "$PRESSES" "$INTERVAL" "$OUT/client.log" "$PRESET" 2>"$OUT/client.stderr" || true
