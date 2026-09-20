@@ -80,7 +80,7 @@ final class StreamSession {
             guard let self else { return }
             logger.info("Session TCP connection ready from \(String(describing: self.transport.link.connection.endpoint))")
         }
-        transport.onInbound = { [weak self] inbound in self?.handleInbound(inbound) }
+        transport.onInbound = { [weak self] inbound in self?.handleInbound(inbound, via: "tcp") }
         transport.onKeyframeNeeded = { [weak self] in
             // A shed or refused delta frame leaves the decoder with a broken reference chain
             // until the next keyframe. Ask for one now instead of waiting for the periodic one.
@@ -142,12 +142,24 @@ final class StreamSession {
 
     // MARK: - Inbound
 
-    private func handleInbound(_ inbound: RealtimeInbound) {
+    private var lastInputSequence: UInt16?
+
+    private func handleInbound(_ inbound: RealtimeInbound, via pipe: String = "tcp") {
         heartbeat.heard()
         switch inbound {
         case .input(let report, let connected):
             // Ignored until the client authenticates.
             guard isAuthenticated, ControllerPassthrough.isEnabled else { return }
+            // A client sending on two transports numbers its reports: the first copy wins,
+            // a copy that is not newer than what was applied is dropped.
+            if let sequence = report.sequence {
+                if let last = lastInputSequence, !ControllerReport.isNewer(sequence, than: last) {
+                    if Harness.isEnabled { Harness.log("H2X", Int(sequence), extra: pipe) }   // the late copy
+                    return
+                }
+                lastInputSequence = sequence
+                if Harness.isEnabled { Harness.log("H2W", Int(sequence), extra: pipe) }   // the copy that won
+            }
             if Harness.isEnabled { Harness.inputReceived(report) }
             gamepad.handle(report, connected: connected)
             if Harness.isEnabled { Harness.inputPosted() }
@@ -411,7 +423,7 @@ final class StreamSession {
                 self.server?.requestKeyframeForRecovery()
             }
         }
-        media.onInbound = { [weak self] inbound in self?.handleInbound(inbound) }
+        media.onInbound = { [weak self] inbound in self?.handleInbound(inbound, via: "rtc") }
         media.onKeyframeNeeded = { [weak self] in self?.server?.requestKeyframeForRecovery() }
         media.onTrace = transport.onTrace
         rtcPeer = peer
