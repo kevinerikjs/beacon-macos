@@ -18,11 +18,13 @@ pkill -x Beacon 2>/dev/null || true
 for i in $(seq 1 50); do lsof -nP -iTCP:7979 -sTCP:LISTEN >/dev/null 2>&1 || break; sleep 0.2; done   # the old listener must be gone
 sleep 0.5
 # the phone pushes its log here when the run ends (HarnessRunner.uploadLog)
+pkill -f 'nc -l 7990' 2>/dev/null || true   # a listener left by an aborted run would swallow the push
 ( nc -l 7990 > "$OUT/client.push" 2>/dev/null ) &
 NC_PID=$!
 BEACON_HARNESS=1 BEACON_HARNESS_LOG="$OUT/beacon.log" "$APP/Contents/MacOS/Beacon" >"$OUT/beacon.stdout" 2>&1 &
 BEACON_PID=$!
 restore() {
+  kill $NC_PID 2>/dev/null || true
   kill $BEACON_PID 2>/dev/null || true; sleep 1
   (nohup "$APP/Contents/MacOS/Beacon" >/dev/null 2>&1 &)  # the build under test, never an older Beacon
 }
@@ -33,7 +35,7 @@ sleep 1.5
 # the phone is often paired over the local network; the tunnel can time out, so retry
 launched=0
 for attempt in 1 2 3; do
-  if xcrun devicectl device process launch --terminate-existing --device "$DEVICE" "$BUNDLE" -harness "$HOST" "$PRESSES" "$INTERVAL" "$PRESET" ${HARNESS_EXTRA:-} >"$OUT/launch.txt" 2>&1; then launched=1; break; fi
+  if xcrun devicectl device process launch --terminate-existing --device "$DEVICE" "$BUNDLE" -- -harness "$HOST" "$PRESSES" "$INTERVAL" "$PRESET" ${HARNESS_EXTRA:-} >"$OUT/launch.txt" 2>&1; then launched=1; break; fi
   sleep 3
 done
 [ "$launched" = 1 ] || { cat "$OUT/launch.txt"; exit 1; }

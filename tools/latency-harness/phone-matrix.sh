@@ -41,7 +41,7 @@ for name in "${RUNS[@]}"; do
   d=$(ls -dt /Volumes/yuh/business/.scratch/harness/*-"$name" | head -1)
   line=$(grep 'input packet' "$d/report.txt" 2>/dev/null)
   [ -n "$line" ] || { printf "%-22s (no result)\n" "$name"; continue; }
-  printf "%-22s " "$name"; echo "$line" | awk '{printf "%6s %6s %6s %6s %6s  %s\n", $6, $8, $10, $12, $14, $15}'
+  printf "%-22s " "$name"; echo "$line" | awk '{printf "%6s %6s %6s %6s %6s  %s\n", $7, $9, $11, $13, $15, $16}'
   wire=$(grep '^WIRE' "$d/client.log" 2>/dev/null | awk -F, '{print $4}' | sort -n | awk '{v[NR]=$1} END{if (NR) printf "send->wire us p50=%d p90=%d max=%d", v[int(NR*.5)], v[int(NR*.9)], v[NR]}')
   [ -n "$wire" ] && printf "%-22s   %s\n" "" "$wire"
   won=$(grep '^H2W' "$d/beacon.log" 2>/dev/null | cut -d, -f4 | sort | uniq -c | xargs)
