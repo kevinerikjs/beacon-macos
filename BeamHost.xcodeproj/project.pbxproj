@@ -514,7 +514,7 @@
 			repositoryURL = "https://github.com/kevinerikjs/phoros.git";
 			requirement = {
 				kind = exactVersion;
-				version = "1.4.0";
+				version = "1.4.1";
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */

@@ -288,6 +288,10 @@ final class StreamSession {
             server?.handleQualityFeedback(quality)
         case .qualityRequest(let preset):
             server?.handleQualityRequest(preset)
+        case .bitrateCapRequest(let bitsPerSecond):
+            clientBitrateCap = bitsPerSecond.map { max(500_000, $0) }
+            logger.info("Client bitrate cap: \(bitsPerSecond.map { "\($0 / 1_000_000) Mbps" } ?? "none")")
+            if let presetBitrate { setMaximumBitrate(presetBitrate) }
         case .viewportLockRequest(let lock):
             server?.handleViewportLockRequest(lock)
         case .windowListRequest:
@@ -348,8 +352,13 @@ final class StreamSession {
     private let wantedBitrateLock = NSLock()
 
     /// A new preset: the controller's ceiling follows it, and it reports where it starts.
+    /// The client's own ceiling (Phoros 1.4.1 `bitrateCapRequest`), applied under the preset's.
+    private var clientBitrateCap: Int?
+    private var presetBitrate: Int?
+
     func setMaximumBitrate(_ bitsPerSecond: Int) {
-        transport.setMaximumBitrate(bitsPerSecond)
+        presetBitrate = bitsPerSecond
+        transport.setMaximumBitrate(min(bitsPerSecond, clientBitrateCap ?? .max))
     }
 
     /// Whether the transport has room for another encoded frame. Read from the capture
