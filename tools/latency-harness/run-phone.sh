@@ -35,6 +35,10 @@ for attempt in 1 2 3; do
   sleep 3
 done
 [ "$launched" = 1 ] || { cat "$OUT/launch.txt"; exit 1; }
+# devicectl brings up a CoreDevice tunnel (utun); SystemConfiguration flags a network
+# change and airportd answers with a ~3.5 s full-band scan that blacks out the Wi-Fi radio.
+# Nothing may call devicectl again until the run is over; the runner's first press waits
+# out this one (HarnessRunner starts pressing ~8 s after launch).
 # devicectl will not overwrite a destination: copy to a fresh name, then move into place
 fetch_log() {
   # the wireless tunnel copy can hang for good: bound each attempt to 40 s
@@ -46,7 +50,7 @@ fetch_log() {
   if [ -s "$OUT/client.tmp" ]; then mv -f "$OUT/client.tmp" "$OUT/client.log"; fi
 }
 # wait for the phone to push its log (falls back to the tunnel copy if it never does)
-DEADLINE=$(( $(date +%s) + 30 + PRESSES * (INTERVAL + 200) / 1000 ))
+DEADLINE=$(( $(date +%s) + 40 + PRESSES * (INTERVAL + 200) / 1000 ))
 while [ "$(date +%s)" -lt "$DEADLINE" ]; do
   sleep 2
   if [ -s "$OUT/client.push" ] && ! kill -0 $NC_PID 2>/dev/null; then mv -f "$OUT/client.push" "$OUT/client.log"; break; fi
