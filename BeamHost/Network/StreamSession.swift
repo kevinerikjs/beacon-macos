@@ -72,6 +72,9 @@ final class StreamSession {
     /// keyframe, not the link, and must not make the controller cut the bitrate.
     private var keyframeBurstUntil = Date.distantPast
     private var pingSentAt = Date.distantPast
+    private var pingBacklog = Int.max
+    private var keepAwakeTimer: DispatchSourceTimer?
+    private var lastVideoWriteAt = Date.distantPast
     /// Bytes handed to the kernel so far (completions), and the last link-rate sample.
     private var bytesAccepted = 0
     private var lastLinkSample: (at: Date, accepted: Int, unacked: Int)?
@@ -148,6 +151,8 @@ final class StreamSession {
         heartbeatTimer = nil
         probeTimer?.cancel()
         probeTimer = nil
+        keepAwakeTimer?.cancel()
+        keepAwakeTimer = nil
         gamepad.release()
         link.cancel()
         logger.info("Session \(self.id) disconnected")
@@ -293,7 +298,7 @@ final class StreamSession {
                     if Harness.isEnabled { Harness.log("RTTK", Int(rtt * 1_000_000)) }
                     break
                 }
-                bitrate.observe(roundTrip: rtt)
+                bitrate.observe(roundTrip: rtt, transportBacklog: pingBacklog)
                 if Harness.isEnabled { Harness.log("RTT", Int(rtt * 1_000_000), extra: "\(Int(bitrate.queueDelay * 1_000_000)),\(bitrate.current)") }
                 if let next = bitrate.evaluate() {
                     logger.info("Link queue \(Int(self.bitrate.queueDelay * 1000)) ms, bitrate → \(next / 1000) kbps")
@@ -381,6 +386,25 @@ final class StreamSession {
         logger.info("Session \(self.id) ready for streaming")
         startHeartbeat()
         startLinkProbe()
+        startKeepAwake()
+    }
+
+    /// A phone's Wi-Fi radio sleeps between packets when the stream goes quiet (a static
+    /// screen encodes to almost nothing), and the next frame then waits 50 to 200 ms for it
+    /// to wake: measured on an iPhone 13 Pro Max, ping round trips of 6 ms with video flowing
+    /// and 60 to 250 ms with a still picture. A tiny packet every 20 ms keeps the radio in
+    /// its active mode. Sent only while no video went out in the last 20 ms, so a moving
+    /// picture costs nothing extra.
+    private func startKeepAwake() {
+        guard Harness.experiment["nokeep"] == nil else { return }
+        let timer = DispatchSource.makeTimerSource(queue: stateQueue)
+        timer.schedule(deadline: .now() + 1, repeating: .milliseconds(20), leeway: .milliseconds(2))
+        timer.setEventHandler { [weak self] in
+            guard let self, self.isAuthenticated, Date().timeIntervalSince(self.lastVideoWriteAt) > 0.02 else { return }
+            self.enqueueLocked(Packet.encode(.heartbeat), lane: .control)
+        }
+        timer.resume()
+        keepAwakeTimer = timer
     }
 
     /// The bitrate this session's link can carry right now, as the controller sees it.
@@ -425,6 +449,7 @@ final class StreamSession {
             self.pingSentAt = Date()
             self.refreshTransportBacklog()
             self.sampleLinkRate(now: self.pingSentAt)
+            self.pingBacklog = self.scheduler.transportBacklog + self.scheduler.backlog.total
             if Harness.isEnabled {
                 Harness.log("SNDBUF", self.scheduler.transportBacklog, extra: "\(self.scheduler.backlog.total),\(self.scheduler.queuedVideo.bytes),\(Int(self.scheduler.drainRate)),\(self.scheduler.videoByteBudget)")
             }
@@ -541,6 +566,7 @@ final class StreamSession {
             }
         }
         while let write = scheduler.dequeue() {
+            if write.lane == .video { lastVideoWriteAt = Date() }
             if Harness.isEnabled, write.tag > 0 { Harness.log("H6D", write.tag - 1, extra: "\(scheduler.transportBacklog)") }
             link.connection.send(content: write.data, completion: .contentProcessed { [weak self] error in
                 guard let self else { return }
