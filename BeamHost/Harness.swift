@@ -238,7 +238,7 @@ final class HarnessFlashWindow {
     private var ticks = 0
     @objc private func tick() {
         ticks += 1
-        if ticks % 60 == 0 { Harness.log("TICK", ticks) }
+        if ticks % 60 == 0 { Harness.log("TICK", ticks, extra: window.occlusionState.contains(.visible) ? "visible" : "occluded") }
         do {
             moverX = (moverX + 8).truncatingRemainder(dividingBy: size.width - 24)
             mover.frame.origin = CGPoint(x: moverX, y: 8)

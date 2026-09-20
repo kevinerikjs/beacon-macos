@@ -2,9 +2,11 @@
 // Represents one connected Beam client (iPhone).
 // Handles the pairing/authentication handshake over TCP, then sends video/audio data.
 //
-// The transport is PhorosNetwork.PhorosConnection. Authentication, send scheduling,
-// video hold and heartbeat policy come from PhorosSession. Controller input is replayed
-// by PhorosInput.VirtualGamepad. What stays here is Beacon glue: KeyStore lookup, the
+// The transport is PhorosNetwork.PhorosLegacyTransport behind the PhorosRealtimeTransport
+// seam: framing, fragmentation, scheduling, shedding, the link probe and bitrate control,
+// heartbeats and the radio keep-awake all live there. Authentication, video hold and the
+// heartbeat timeout come from PhorosSession. Controller input is replayed by
+// PhorosInput.VirtualGamepad. What stays here is Beacon glue: KeyStore lookup, the
 // force-PCM escape hatch, the preferred audio sample rate, and forwarding to StreamServer.
 
 import CoreMedia
@@ -18,14 +20,11 @@ import PhorosSession
 
 private let logger = Logger(subsystem: "com.beam.beacon", category: "StreamSession")
 
-/// Largest media payload we put in one packet. Under a typical 1500-byte MTU.
-private let kMaxMediaPayload = 1400
-
 final class StreamSession {
 
     let id: String = UUID().uuidString
 
-    private let link: PhorosConnection
+    private let transport: PhorosLegacyTransport
     private weak var server: StreamServer?
 
     private(set) var isAuthenticated = false
@@ -48,79 +47,57 @@ final class StreamSession {
     private(set) var authenticatedDeviceID: String?
     private var isTerminated = false
 
-    private var videoFrameNumber: UInt32 = 0
-    private var audioSequenceNumber: UInt32 = 0
-
-    // MARK: - Send scheduling
-    //
-    // Everything travels over the one TCP connection. On a constrained link TCP never drops,
-    // so once the encoder outpaces the link every frame queues and latency grows without
-    // bound (BEAM-21). SendScheduler drops late video, keeps audio ahead of video (BEAM-31),
-    // sheds audio only on its own backlog and never for long (BEAM-24), and re-anchors its
-    // counters whenever the connection drains so an accounting slip can never silence a
-    // stream. All access is serialised on `stateQueue`.
-    private var scheduler = SendScheduler()
     private var hold = VideoHold()
     private var heartbeat = HeartbeatMonitor()
     /// One virtual pad per session. Beacon streams to one client at a time.
     private let gamepad = VirtualGamepad(profile: GamepadProfile.selected)
     private var heartbeatTimer: DispatchSourceTimer?
-    private var probeTimer: DispatchSourceTimer?
-    private var probe = RoundTripProbe(staleAfter: 1)
-    private var bitrate = BitrateController(maximum: 6_000_000)
-    /// A ping sent before this time waited behind a keyframe. Its round trip measures the
-    /// keyframe, not the link, and must not make the controller cut the bitrate.
-    private var keyframeBurstUntil = Date.distantPast
-    private var pingSentAt = Date.distantPast
-    private var pingBacklog = Int.max
-    private var keepAwakeTimer: DispatchSourceTimer?
-    private var lastVideoWriteAt = Date.distantPast
-    /// Bytes handed to the kernel so far (completions), and the last link-rate sample.
-    private var bytesAccepted = 0
-    private var lastLinkSample: (at: Date, accepted: Int, unacked: Int)?
-    private var linkRate: Double = 0
-    private var holdRetryScheduled = false
-
-    /// Reads the bytes the kernel holds unacknowledged for this connection into the
-    /// scheduler. TCP's send buffer grows to megabytes on a slow link and a write completes
-    /// as soon as the kernel takes it, so without this the scheduler sees an empty queue
-    /// while seconds of video wait below it.
-    private func refreshTransportBacklog() {
-        guard Harness.experiment["nokq"] == nil,
-              let tcp = link.connection.metadata(definition: NWProtocolTCP.definition) as? NWProtocolTCP.Metadata else { return }
-        scheduler.transportBacklog = Int(tcp.availableSendBuffer)
-    }
-
-    /// Link rate from what the kernel accepted minus what it still holds, sampled on the
-    /// probe timer while the buffer is non-empty (a link-limited window).
-    private func sampleLinkRate(now: Date) {
-        let unacked = scheduler.transportBacklog
-        defer { lastLinkSample = (now, bytesAccepted, unacked) }
-        guard let last = lastLinkSample, last.unacked > 0 else { return }
-        let drained = (bytesAccepted - last.accepted) - (unacked - last.unacked)
-        let dt = now.timeIntervalSince(last.at)
-        guard drained > 0, dt > 0.05 else { return }
-        let sample = Double(drained) / dt
-        linkRate = linkRate == 0 ? sample : linkRate * 0.7 + sample * 0.3
-        scheduler.reportDrainRate(linkRate)
-    }
-    private var lastDropLogAt = Date.distantPast
 
     private let stateQueue = DispatchQueue(label: "com.beam.session.state", qos: .userInteractive)
 
     init(connection: NWConnection, server: StreamServer) {
-        link = PhorosConnection(accepting: connection, queue: stateQueue)
+        transport = PhorosLegacyTransport(
+            accepting: connection,
+            options: LegacyTransportOptions(role: .host, keepAwakeInterval: Harness.experiment["nokeep"] == nil ? 0.02 : 0,
+                                            readsLinkBacklog: Harness.experiment["nokq"] == nil),
+            queue: stateQueue
+        )
         self.server = server
     }
 
     // MARK: - Lifecycle
 
     func start() {
-        link.onReady = { [weak self] in
+        transport.onReady = { [weak self] in
             guard let self else { return }
-            logger.info("Session TCP connection ready from \(String(describing: self.link.connection.endpoint))")
+            logger.info("Session TCP connection ready from \(String(describing: self.transport.link.connection.endpoint))")
         }
-        link.onFrame = { [weak self] frame in self?.handleFrame(frame) }
+        transport.onInbound = { [weak self] inbound in self?.handleInbound(inbound) }
+        transport.onKeyframeNeeded = { [weak self] in
+            // A shed or refused delta frame leaves the decoder with a broken reference chain
+            // until the next keyframe. Ask for one now instead of waiting for the periodic one.
+            self?.server?.requestKeyframeForRecovery()
+        }
+        transport.onBitrateChange = { [weak self] bitrate in
+            guard let self else { return }
+            logger.info("Link queue \(Int(self.transport.metrics.queueDelay * 1000)) ms, bitrate → \(bitrate / 1000) kbps")
+            self.wantedBitrate = bitrate
+            self.server?.session(self, wantsBitrate: bitrate)
+        }
+        if Harness.isEnabled {
+            transport.onTrace = { trace in
+                switch trace {
+                case .videoQueued(let frame, let pts, let bytes): Harness.log("H6", Int(frame), extra: "\(pts),\(bytes)")
+                case .videoHandedToLink(let frame, let backlog): Harness.log("H6D", Int(frame), extra: "\(backlog)")
+                case .videoAcceptedByLink(let frame): Harness.log("H6C", Int(frame))
+                case .probe(let rtt, let queueDelay, let bitrate, let counted):
+                    if counted { Harness.log("RTT", Int(rtt * 1_000_000), extra: "\(Int(queueDelay * 1_000_000)),\(bitrate)") }
+                    else { Harness.log("RTTK", Int(rtt * 1_000_000)) }
+                case .linkSample(let backlog, let queued, let drainRate, let budget):
+                    Harness.log("SNDBUF", backlog, extra: "0,\(queued),\(Int(drainRate)),\(budget)")
+                }
+            }
+        }
         gamepad.onEvent = { [id] event in
             switch event {
             case .created: logger.info("Session \(id) virtual gamepad created as \(GamepadProfile.selected.rawValue, privacy: .public)")
@@ -131,17 +108,17 @@ final class StreamSession {
                 logger.warning("Session \(id) HID report rejected: \(String(format: "0x%08X", status))")
             }
         }
-        link.onEnd = { [weak self] reason in
+        transport.onEnd = { [weak self] reason in
             guard let self else { return }
-            switch reason {
+            switch reason as? PhorosConnectionEnd {
             case .transportFailed(let error): logger.error("Session TCP failed: \(error)")
             case .protocolViolation(let violation): logger.error("Session \(self.id) protocol violation: \(String(describing: violation))")
             case .closedByPeer: logger.info("Session \(self.id) peer closed connection")
-            case .cancelled: break
+            case .cancelled, .none: break
             }
             self.server?.sessionDisconnected(self)
         }
-        link.start()
+        transport.start()
     }
 
     func disconnect() {
@@ -149,47 +126,35 @@ final class StreamSession {
         isTerminated = true
         heartbeatTimer?.cancel()
         heartbeatTimer = nil
-        probeTimer?.cancel()
-        probeTimer = nil
-        keepAwakeTimer?.cancel()
-        keepAwakeTimer = nil
         gamepad.release()
-        link.cancel()
+        transport.cancel()
         logger.info("Session \(self.id) disconnected")
     }
 
     // MARK: - Inbound
 
-    private func handleFrame(_ frame: Frame) {
+    private func handleInbound(_ inbound: RealtimeInbound) {
         heartbeat.heard()
-        switch frame {
-        case .packet(let packet) where packet.type == .input:
-            // Binary, routed by packet type before any JSON decode: at 60 Hz a fall-through
-            // to the JSON path would flood the log. Ignored until the client authenticates.
-            guard isAuthenticated, ControllerPassthrough.isEnabled,
-                  let report = ControllerReport.parse(from: packet.payload) else { return }
+        switch inbound {
+        case .input(let report, let connected):
+            // Ignored until the client authenticates.
+            guard isAuthenticated, ControllerPassthrough.isEnabled else { return }
             if Harness.isEnabled { Harness.inputReceived(report) }
-            gamepad.handle(report, connected: packet.flags & ControllerReport.connectedFlag != 0)
+            gamepad.handle(report, connected: connected)
             if Harness.isEnabled { Harness.inputPosted() }
-        case .packet(let packet):
-            handleJSONMessage(packet.payload)
-        case .message(let json):
-            handleJSONMessage(json)
-        }
-    }
-
-    private func handleJSONMessage(_ data: Data) {
-        if let message = try? JSONDecoder().decode(PairingMessage.self, from: data) {
-            handlePairingMessage(message)
-            return
-        }
-        do {
-            handleControlMessage(try JSONDecoder().decode(ControlMessage.self, from: data))
-        } catch ControlMessageError.unknownType(let name) {
+        case .control(let message):
+            handleControlMessage(message)
+        case .unknownControl(let name):
             // A newer client. Ignoring is the contract; see Phoros docs/compatibility.md.
             logger.info("Ignoring unknown control message '\(name)' from a newer client")
-        } catch {
-            logger.error("Failed to decode incoming message: \(error)")
+        case .message(let json):
+            if let message = try? JSONDecoder().decode(PairingMessage.self, from: json) {
+                handlePairingMessage(message)
+            } else {
+                logger.error("Failed to decode incoming message")
+            }
+        case .heartbeat, .video, .videoParameterSets, .audio:
+            break  // client to host never carries media
         }
     }
 
@@ -244,8 +209,9 @@ final class StreamSession {
             negotiatedVideoCodec = session.videoCodec
             wantsAudio = session.peer.wantsAudio
             maximumFrameRate = session.peer.maximumFrameRate
-            scheduler.policy = Harness.sendPolicy(base: session.audioCodec == .pcmFloat32 ? .pcmAudio : SendPolicy())
+            transport.setSendPolicy(Harness.sendPolicy(base: session.audioCodec == .pcmFloat32 ? .pcmAudio : SendPolicy()))
             isAuthenticated = true
+            transport.setStreaming(true)
             authenticatedDeviceID = session.deviceID
             sendPairingResponse(session.reply)
 
@@ -275,7 +241,7 @@ final class StreamSession {
     /// phone's receive loop, which parses a packet header first, dispatches them correctly.
     func sendPairingResponse(_ message: PairingMessage) {
         guard let data = try? JSONEncoder().encode(message) else { return }
-        enqueue(Packet.encode(.control, payload: data), lane: .control)
+        transport.sendMessage(data)
     }
 
     // MARK: - Control Messages
@@ -290,24 +256,8 @@ final class StreamSession {
                 return
             }
             MediaKeyDispatcher.send(command)
-        case .pong:
-            // heartbeat.heard() already ran for this frame. The round trip of this pong is
-            // the link's queueing delay: the ping waited behind every queued video byte.
-            if let rtt = probe.receivedPong() {
-                guard pingSentAt > keyframeBurstUntil else {
-                    if Harness.isEnabled { Harness.log("RTTK", Int(rtt * 1_000_000)) }
-                    break
-                }
-                bitrate.observe(roundTrip: rtt, transportBacklog: pingBacklog)
-                if Harness.isEnabled { Harness.log("RTT", Int(rtt * 1_000_000), extra: "\(Int(bitrate.queueDelay * 1_000_000)),\(bitrate.current)") }
-                if let next = bitrate.evaluate() {
-                    logger.info("Link queue \(Int(self.bitrate.queueDelay * 1000)) ms, bitrate → \(next / 1000) kbps")
-                    wantedBitrate = next
-                    server?.session(self, wantsBitrate: next)
-                }
-            }
-        case .ping:
-            sendControl(.pong)
+        case .pong, .ping:
+            break  // the transport measures the round trip and answers pings
         case .clockProbe(let probe):
             // Both host times on the clock video timestamps use, so the client can turn a
             // frame's presentation timestamp into an age.
@@ -320,13 +270,15 @@ final class StreamSession {
             // Connection warm-up (BEAM-33): hold video so Tailscale's path discovery can
             // finish, keep audio flowing. Queued video is stale by the time it resumes.
             hold.pause()
-            scheduler.dropQueuedVideo()
+            transport.setStreaming(false)
+            transport.dropQueuedVideo()
             logger.info("Video paused by client (connection warmup)")
         case .videoResume:
             // Releasing the hold is not enough on its own (BEAM-21): the encoder dropped
             // everything during the hold, including the IDR, and considers its parameter
             // sets sent. VideoHold spells out the repair; StreamServer performs both steps.
             _ = hold.resume()
+            transport.setStreaming(true)
             logger.info("Video resumed by client")
             server?.clientReleasedVideoHold(self)
         case .streamStop:
@@ -376,8 +328,7 @@ final class StreamSession {
     }
 
     private func sendControl(_ message: ControlMessage) {
-        guard let data = try? JSONEncoder().encode(message) else { return }
-        enqueue(Packet.encode(.control, payload: data), lane: .control)
+        transport.sendControl(message)
     }
 
     // MARK: - Streaming
@@ -385,31 +336,10 @@ final class StreamSession {
     func beginReceivingStream(videoEncoder: HostVideoEncoder, audioEncoder: HostAudioEncoder) {
         logger.info("Session \(self.id) ready for streaming")
         startHeartbeat()
-        startLinkProbe()
-        startKeepAwake()
     }
 
-    /// A phone's Wi-Fi radio sleeps between packets when the stream goes quiet (a static
-    /// screen encodes to almost nothing), and the next frame then waits 50 to 200 ms for it
-    /// to wake: measured on an iPhone 13 Pro Max, ping round trips of 6 ms with video flowing
-    /// and 60 to 250 ms with a still picture. A tiny packet every 20 ms keeps the radio in
-    /// its active mode. Sent only while no video went out in the last 20 ms, so a moving
-    /// picture costs nothing extra.
-    private func startKeepAwake() {
-        guard Harness.experiment["nokeep"] == nil else { return }
-        let timer = DispatchSource.makeTimerSource(queue: stateQueue)
-        timer.schedule(deadline: .now() + 1, repeating: .milliseconds(20), leeway: .milliseconds(2))
-        timer.setEventHandler { [weak self] in
-            guard let self, self.isAuthenticated, Date().timeIntervalSince(self.lastVideoWriteAt) > 0.02 else { return }
-            self.enqueueLocked(Packet.encode(.heartbeat), lane: .control)
-        }
-        timer.resume()
-        keepAwakeTimer = timer
-    }
-
-    /// The bitrate this session's link can carry right now, as the controller sees it.
-    /// Mirrored out of `stateQueue` so the server can read it from any queue without
-    /// blocking on the session (the controller reports from `stateQueue` itself).
+    /// The bitrate this session's link can carry right now, as the transport's controller
+    /// sees it. Mirrored so the server can read it from any queue.
     private(set) var wantedBitrate: Int {
         get { wantedBitrateLock.withLock { _wantedBitrate } }
         set { wantedBitrateLock.withLock { _wantedBitrate = newValue } }
@@ -417,48 +347,19 @@ final class StreamSession {
     private var _wantedBitrate = Int.max
     private let wantedBitrateLock = NSLock()
 
-    /// A new preset: the controller's ceiling follows it.
+    /// A new preset: the controller's ceiling follows it, and it reports where it starts.
     func setMaximumBitrate(_ bitsPerSecond: Int) {
-        stateQueue.async { [self] in
-            bitrate.setMaximum(bitsPerSecond)
-            wantedBitrate = bitrate.current
-            // The controller starts a new link below the ceiling and climbs; the encoder
-            // has to start there too.
-            server?.session(self, wantsBitrate: bitrate.current)
-        }
+        transport.setMaximumBitrate(bitsPerSecond)
     }
 
     /// Whether the transport has room for another encoded frame. Read from the capture
     /// thread before the encode, so a frame the link cannot take is skipped for free.
     var acceptsVideoFrame: Bool {
-        stateQueue.sync {
-            guard isAuthenticated, !hold.isHeld else { return true }
-            refreshTransportBacklog()
-            return scheduler.shouldEncodeVideo()
-        }
+        guard isAuthenticated, !hold.isHeld else { return true }
+        return transport.acceptsVideoFrame
     }
 
-    /// Pings the client five times a second while streaming. The reply's round trip feeds
-    /// the bitrate controller; the client already answers pings for its own probe.
-    private func startLinkProbe() {
-        guard Harness.experiment["noabr"] == nil else { return }
-        let timer = DispatchSource.makeTimerSource(queue: stateQueue)
-        timer.schedule(deadline: .now() + 0.2, repeating: 0.2, leeway: .milliseconds(5))
-        timer.setEventHandler { [weak self] in
-            guard let self, self.isAuthenticated, !self.hold.isHeld, self.probe.shouldSend() else { return }
-            self.pingSentAt = Date()
-            self.refreshTransportBacklog()
-            self.sampleLinkRate(now: self.pingSentAt)
-            self.pingBacklog = self.scheduler.transportBacklog + self.scheduler.backlog.total
-            if Harness.isEnabled {
-                Harness.log("SNDBUF", self.scheduler.transportBacklog, extra: "\(self.scheduler.backlog.total),\(self.scheduler.queuedVideo.bytes),\(Int(self.scheduler.drainRate)),\(self.scheduler.videoByteBudget)")
-            }
-            self.sendControl(.ping)
-        }
-        timer.resume()
-        probeTimer = timer
-    }
-
+    /// The heartbeat timeout is Beacon's policy; the packets themselves come from the transport.
     private func startHeartbeat() {
         heartbeat = HeartbeatMonitor()
         let timer = DispatchSource.makeTimerSource(queue: stateQueue)
@@ -468,9 +369,7 @@ final class StreamSession {
             if self.heartbeat.isTimedOut() {
                 logger.warning("Heartbeat timeout for session \(self.id) (\(Int(Date().timeIntervalSince(self.heartbeat.lastHeard)))s without traffic)")
                 self.disconnect()
-                return
             }
-            self.enqueueLocked(Packet.encode(.heartbeat), lane: .control)
         }
         timer.resume()
         heartbeatTimer = timer
@@ -480,115 +379,21 @@ final class StreamSession {
 
     func send(spsPps data: Data, codec: VideoCodecID) {
         guard isAuthenticated else { return }
-        enqueue(Packet.encode(.parameterSets, flags: codec.packetFlags, payload: data), lane: .video)
+        transport.sendVideoParameterSets(data, codec: codec)
     }
 
     func send(videoData: Data, pts: CMTime, isKeyframe: Bool) {
-        stateQueue.async { [self] in
-            guard isAuthenticated, !hold.isHeld else { return }
-            guard scheduler.admitVideo(isKeyframe: isKeyframe) else {
-                logDropIfDue("Dropping video to keep latency bounded (\(scheduler.droppedVideoFrames) frames, backlog \(scheduler.backlog.total / 1024)KB)")
-                return
-            }
-            let frameNumber = videoFrameNumber
-            videoFrameNumber &+= 1
-            // One write per frame: the packets stay identical on the wire, the transport just
-            // gets them together instead of forty separate sends.
-            let packets = VideoFragmentHeader.fragment(
-                videoData, frameNumber: frameNumber, presentationTimestamp: pts.microseconds, maximumPayloadLength: kMaxMediaPayload
-            ).map { Packet.encode(isKeyframe ? .videoKeyframe : .video, payload: $0).lengthPrefixed() }
-            scheduler.enqueueVideoFrame(packets, isKeyframe: isKeyframe, tag: Int(frameNumber) + 1)
-            if isKeyframe {
-                let bytes = Double(packets.reduce(0) { $0 + $1.count })
-                let seconds = scheduler.drainRate > 0 ? bytes / scheduler.drainRate : 0.2
-                keyframeBurstUntil = Date().addingTimeInterval(min(2, max(0.1, seconds * 1.5)))
-            }
-            drain()
-            if Harness.isEnabled { Harness.log("H6", Int(frameNumber), extra: "\(pts.microseconds),\(videoData.count)") }
-        }
+        guard isAuthenticated, !hold.isHeld else { return }
+        transport.sendVideo(videoData, presentationTimestamp: pts.microseconds, isKeyframe: isKeyframe)
     }
 
     // MARK: - Send Audio
 
     func send(audioData: Data, codec: AudioCodecID, pts: CMTime) {
-        stateQueue.async { [self] in
-            // Belt and braces: StreamServer already fans each representation out only to the
-            // sessions that negotiated it, but a fan-out bug must never be able to put AAC
-            // bytes on a legacy wire — that is white noise into someone's headphones.
-            guard isAuthenticated, wantsAudio, codec == negotiatedAudioCodec else { return }
-            guard scheduler.admitAudio() else {
-                logDropIfDue("Dropping audio, link saturated (\(scheduler.droppedAudioChunks) chunks, audio backlog \(scheduler.backlog.audio / 1024)KB)")
-                return
-            }
-            let sequence = audioSequenceNumber
-            audioSequenceNumber &+= 1
-            var payload = AudioChunkHeader(sequenceNumber: sequence, presentationTimestamp: pts.microseconds).serialized()
-            payload.append(audioData)
-            // Audio has no fragmentation path; an over-cap payload would be mis-framed at the
-            // receiver, so drop it instead.
-            guard payload.count <= kMaxMediaPayload else {
-                logger.error("Dropping oversized audio payload (\(payload.count) B > \(kMaxMediaPayload))")
-                return
-            }
-            enqueueLocked(Packet.encode(.audio, flags: codec.packetFlags, payload: payload), lane: .audio)
-        }
-    }
-
-    // MARK: - Scheduler plumbing
-
-    private func enqueue(_ packet: Data, lane: SendLane) {
-        stateQueue.async { [self] in enqueueLocked(packet, lane: lane) }
-    }
-
-    /// stateQueue only.
-    private func enqueueLocked(_ packet: Data, lane: SendLane) {
-        scheduler.enqueue(packet.lengthPrefixed(), lane: lane)
-        drain()
-    }
-
-    /// stateQueue only. Hands writes to the transport, control first, then audio, then video.
-    private func drain() {
-        defer {
-            // A shed or refused delta frame leaves the decoder with a broken reference chain
-            // until the next keyframe. Ask for one now instead of waiting up to two seconds.
-            if scheduler.needsKeyframe { server?.requestKeyframeForRecovery() }
-        }
-        refreshTransportBacklog()
-        defer {
-            // Video held back by the transport backlog has nothing to wake it: retry shortly.
-            if scheduler.queuedVideo.frames > 0, !holdRetryScheduled {
-                holdRetryScheduled = true
-                stateQueue.asyncAfter(deadline: .now() + .milliseconds(4)) { [weak self] in
-                    guard let self else { return }
-                    self.holdRetryScheduled = false
-                    self.drain()
-                }
-            }
-        }
-        while let write = scheduler.dequeue() {
-            if write.lane == .video { lastVideoWriteAt = Date() }
-            if Harness.isEnabled, write.tag > 0 { Harness.log("H6D", write.tag - 1, extra: "\(scheduler.transportBacklog)") }
-            link.connection.send(content: write.data, completion: .contentProcessed { [weak self] error in
-                guard let self else { return }
-                self.stateQueue.async {
-                    if Harness.isEnabled, write.tag > 0 { Harness.log("H6C", write.tag - 1) }
-                    self.scheduler.completed(write)
-                    self.bytesAccepted += write.data.count
-                    if let error {
-                        logger.error("TCP send error: \(error)")
-                        self.disconnect()
-                        return
-                    }
-                    self.drain()
-                }
-            })
-        }
-    }
-
-    private func logDropIfDue(_ message: String) {
-        let now = Date()
-        guard now.timeIntervalSince(lastDropLogAt) >= 5 else { return }
-        lastDropLogAt = now
-        logger.info("\(message)")
+        // Belt and braces: StreamServer already fans each representation out only to the
+        // sessions that negotiated it, but a fan-out bug must never be able to put AAC
+        // bytes on a legacy wire: that is white noise into someone's headphones.
+        guard isAuthenticated, wantsAudio, codec == negotiatedAudioCodec else { return }
+        transport.sendAudio(audioData, codec: codec, presentationTimestamp: pts.microseconds)
     }
 }

@@ -430,7 +430,7 @@ final class StreamServer {
         guard rate != screenCapture.currentFrameRate else { return }
         logger.info("Frame rate → \(Int(rate)) fps (preset \(preset.rawValue), display \(Int(self.screenCapture.displayRefreshRate)) Hz)")
         videoEncoder.reconfigure(frameRate: rate)
-        Task { try? await screenCapture.updateConfiguration(preset: preset, frameRate: rate) }
+        applyCaptureConfiguration()
     }
 
     /// A session's bitrate controller moved. The shared encoder runs at the lowest rate any
@@ -459,11 +459,24 @@ final class StreamServer {
         audioEncoder.setAACBitrate(
             AudioCodecID.aacBitrate(for: preset, channels: currentAudioFormat?.channels ?? 2)
         )
-        Task {
-            try? await screenCapture.updateConfiguration(preset: preset, frameRate: frameRate)
-            broadcastQualityChanged(preset)
-        }
+        applyCaptureConfiguration { [weak self] in self?.broadcastQualityChanged(preset) }
         logger.info("Applying quality preset: \(preset.rawValue)")
+    }
+
+    /// Capture configuration changes are async and used to race: a preset applied at
+    /// session start could land after the client's own request and put a 120 fps stream
+    /// back to 30. One task at a time, each applying whatever is current when it runs.
+    private var captureConfigurationTask: Task<Void, Never>?
+    private func applyCaptureConfiguration(then completion: (() -> Void)? = nil) {
+        let previous = captureConfigurationTask
+        captureConfigurationTask = Task { [weak self] in
+            await previous?.value
+            guard let self else { return }
+            let preset = self.qualityManager.activePreset
+            let rate = self.negotiatedFrameRate(for: preset)
+            try? await self.screenCapture.updateConfiguration(preset: preset, frameRate: rate)
+            completion?()
+        }
     }
 
     // MARK: - Capture Watchdog
