@@ -63,10 +63,14 @@ enum Harness {
 
     static func encoderTuning() -> VideoEncoderConfiguration.LatencyTuning {
         var t = VideoEncoderConfiguration.LatencyTuning()
+        // Beacon's defaults, measured on the harness (BEAM-47): the low-latency rate control
+        // mode halves encode time and holds the target bitrate where the default mode
+        // overshoots it by half on busy content. The other knobs measured no gain.
+        t.lowLatencyRateControl = true
         guard isEnabled else { return t }
         if experiment["delay0"] != nil { t.maxFrameDelayCount = 0 }
         if experiment["speed"] != nil { t.prioritizeSpeed = true }
-        if experiment["llrc"] != nil { t.lowLatencyRateControl = true }
+        if experiment["nollrc"] != nil { t.lowLatencyRateControl = false }
         switch experiment["profile"] {
         case "baseline": t.h264Profile = .baseline
         case "main": t.h264Profile = .main
@@ -79,8 +83,10 @@ enum Harness {
     static var captureQueueDepth: Int? { experiment["queue"].flatMap(Int.init) }
     /// BEACON_EXP=fps=120: capture and encode at this rate instead of the preset's.
     static func frameRate(for preset: Double) -> Double { experiment["fps"].flatMap(Double.init) ?? preset }
-    /// BEACON_EXP=gop=10: seconds between periodic keyframes (default 2).
-    static var keyframeInterval: Double? { experiment["gop"].flatMap(Double.init) }
+    /// BEACON_EXP=gop=N: seconds between periodic keyframes. Beacon's default is 5: the
+    /// transport never loses a frame, joiners and recoveries ask for their own keyframe, and
+    /// a 1080p keyframe is a quarter second of a 6 Mbps link every time it goes out.
+    static var keyframeInterval: Double { experiment["gop"].flatMap(Double.init) ?? 5 }
 
     /// `sched=old` reproduces the shipped scheduler: no queue-age shedding and a byte budget the
     /// in-flight counter alone could never reach, so nothing is ever dropped.

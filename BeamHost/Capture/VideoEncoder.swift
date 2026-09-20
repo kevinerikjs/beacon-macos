@@ -42,7 +42,7 @@ final class HostVideoEncoder {
         encoder = PhorosMedia.VideoEncoder(configuration: VideoEncoderConfiguration(
             width: width, height: height, frameRate: frameRate,
             bitrateBitsPerSecond: Int(bitrateMbps * 1_000_000), codec: codec,
-            keyframeInterval: Harness.keyframeInterval ?? 2,
+            keyframeInterval: Harness.keyframeInterval,
             latency: Harness.encoderTuning()
         ))
         encoder.onParameterSets = { [weak self] data, codec in
