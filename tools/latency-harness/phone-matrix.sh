@@ -15,8 +15,14 @@ if [ "${SKIP_INSTALL:-0}" != 1 ]; then
     sleep 3
   done
   sleep 6   # the install tunnel's scan
-  # the first run after a new binary on either side tends not to connect at all; burn one
-  "$HERE/run-phone.sh" "${TAG}_warmup" 5 600 1080p60 >/dev/null 2>&1 || true
+  # the first runs after a new binary on the phone do not connect (iOS re-evaluates the
+  # app's local-network access for a while); warm up until one does
+  for w in 1 2 3 4 5 6; do
+    "$HERE/run-phone.sh" "${TAG}_warmup$w" 5 600 1080p60 >/dev/null 2>&1 || true
+    d=$(ls -dt /Volumes/yuh/business/.scratch/harness/*-"${TAG}_warmup$w" | head -1)
+    [ "$(grep -c '^RTT' "$d/beacon.log" 2>/dev/null)" != 0 ] && { echo "warm after $w"; break; }
+    sleep 10
+  done
 fi
 pkill -x Beacon 2>/dev/null; sleep 1
 # label | Beacon env | Beam extra args
