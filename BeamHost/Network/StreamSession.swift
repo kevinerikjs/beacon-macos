@@ -458,6 +458,9 @@ final class StreamSession {
         rtcTransport = media
         // PHOROS_UDP_CLASS=0|3|4: the peer socket's service class (harness experiment)
         if let c = ProcessInfo.processInfo.environment["PHOROS_UDP_CLASS"].flatMap(Int32.init) { peer.setServiceClass(c) }
+        // PHOROS_ACK_CLOCK=1: hold each frame until the previous one is acknowledged (experiment)
+        media.ackClocked = ProcessInfo.processInfo.environment["PHOROS_ACK_CLOCK"] == "1"
+        if let w = ProcessInfo.processInfo.environment["PHOROS_ACK_WINDOW"].flatMap(UInt32.init) { media.ackWindow = w }
         guard peer.runOwnSocket() == 0 else { rtcPeer = nil; rtcTransport = nil; return }
         transport.sendControl(.transportOffer(TransportOffer(kind: "rtc2", address: address, info: peer.localInfo)))
         logger.info("rtc2 offered at \(address)")

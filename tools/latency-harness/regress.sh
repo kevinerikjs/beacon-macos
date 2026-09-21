@@ -1,5 +1,6 @@
 #!/bin/bash
 # Latency regression gate. Runs the unit tests and a fixed set of harness scenarios on
+# the synthetic frame source (no Screen Recording grant involved, so it runs unattended),
 # loopback, takes the better of two runs per scenario (the loopback has its own noise),
 # and compares p50/p95 of the full loop against baseline.json. A scenario fails when it
 # is worse than the baseline by more than the tolerance (3 ms or 15% at p50, 5 ms or 25%
@@ -19,11 +20,11 @@ echo "== phoros unit tests"
 
 # label | BEACON_EXP | SHAPE
 SCENARIOS="
-tcp_1080p120   |load|
-rtc2_1080p120  |load,rtc|
-tcp_1080p60    |load|
-tcp_12mbps     |load|--down-mbps 12 --delay-ms 5
-rtc2_drop2     |load,rtc|
+tcp_1080p120   |load,synthetic|
+rtc2_1080p120  |load,synthetic,rtc|
+tcp_1080p60    |load,synthetic|
+tcp_12mbps     |load,synthetic|--down-mbps 12 --delay-ms 5
+rtc2_drop2     |load,synthetic,rtc|
 "
 RESULTS=""
 while IFS='|' read -r label exp shape; do

@@ -164,7 +164,9 @@ enum Harness {
 /// Beam Controller. The flip is the visual change the client detects in the stream.
 final class HarnessFlashWindow {
     private let window: NSWindow
-    private var white = false
+    /// Read by the synthetic frame source (BEACON_EXP=synthetic): what colour the "screen" is.
+    static var isWhite = false
+    private var white = false { didSet { HarnessFlashWindow.isWhite = white } }
     private var flips = 0
     private var observers: [NSObjectProtocol] = []
     private var lastA = false
@@ -291,6 +293,87 @@ final class HarnessFlashWindow {
             window.displayIfNeeded()
             CATransaction.flush()
             Harness.log("H4", flips, extra: white ? "white" : "black")
+        }
+    }
+}
+
+
+/// Frames without the screen: a timer at the capture rate fills a BGRA buffer with the flash
+/// window's colour (plus a moving bar so the encoder has motion) and hands it to the same
+/// delegate path ScreenCaptureKit uses. No Screen Recording grant needed, so a rebuilt
+/// Beacon runs unattended. BEACON_EXP=synthetic.
+final class HarnessSyntheticSource {
+    private var timer: DispatchSourceTimer?
+    private var pool: CVPixelBufferPool?
+    private var format: CMVideoFormatDescription?
+    private let width: Int, height: Int
+    private var phase = 0
+    private var rng: UInt64 = 0x9E3779B97F4A7C15
+    private var bands: [[UInt32]] = []
+    /// Rows of noise per frame: sets how many bits a frame costs. HARNESS_NOISE_ROWS, default 1/64 of the height, which fills a 10 Mbps cap at 120 fps.
+    private lazy var noiseRows: Int = Int(ProcessInfo.processInfo.environment["HARNESS_NOISE_ROWS"] ?? "") ?? max(8, height / 64)
+    private var bandIndex = 0
+    init(width: Int, height: Int) { self.width = width; self.height = height }
+
+    func start(frameRate: Double, sink: @escaping (CMSampleBuffer) -> Void) {
+        let attrs: [CFString: Any] = [kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA,
+                                      kCVPixelBufferWidthKey: width, kCVPixelBufferHeightKey: height,
+                                      kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary]
+        CVPixelBufferPoolCreate(nil, nil, attrs as CFDictionary, &pool)
+        let t = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "beam.harness.synthetic", qos: .userInteractive))
+        t.schedule(deadline: .now(), repeating: 1.0 / frameRate, leeway: .microseconds(200))
+        t.setEventHandler { [weak self] in
+            guard let self, let pool else { return }
+            let t0 = DispatchTime.now().uptimeNanoseconds
+            guard let buffer = Self.make(pool) else { Harness.log("H5N", 0); return }
+            self.fill(buffer)
+            let gen = (DispatchTime.now().uptimeNanoseconds - t0) / 1_000_000
+            if gen > 4 { Harness.log("H5G", Int(gen)) }
+            if self.format == nil { CMVideoFormatDescriptionCreateForImageBuffer(allocator: nil, imageBuffer: buffer, formatDescriptionOut: &self.format) }
+            guard let format = self.format else { return }
+            var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: Int32(frameRate)), presentationTimeStamp: CMClockGetTime(CMClockGetHostTimeClock()), decodeTimeStamp: .invalid)
+            var sample: CMSampleBuffer?
+            CMSampleBufferCreateReadyWithImageBuffer(allocator: nil, imageBuffer: buffer, formatDescription: format, sampleTiming: &timing, sampleBufferOut: &sample)
+            if let sample { sink(sample) }
+        }
+        t.resume(); timer = t
+    }
+
+    private static func make(_ pool: CVPixelBufferPool) -> CVPixelBuffer? {
+        var b: CVPixelBuffer?; CVPixelBufferPoolCreatePixelBuffer(nil, pool, &b); return b
+    }
+
+    private func fill(_ buffer: CVPixelBuffer) {
+        CVPixelBufferLockBaseAddress(buffer, [])
+        defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
+        guard let base = CVPixelBufferGetBaseAddress(buffer) else { return }
+        let rowBytes = CVPixelBufferGetBytesPerRow(buffer)
+        let v: UInt8 = HarnessFlashWindow.isWhite ? 235 : 16
+        memset(base, Int32(v), rowBytes * height)
+        // a 40 px bar sweeping across so every frame differs, and a band of fresh noise in the
+        // top quarter so the encoder spends its whole bitrate budget (a flat frame would
+        // compress to nothing and the link experiments need the bytes). The detector's
+        // centre patch stays clean.
+        phase = (phase + 6) % max(1, width - 40)
+        let p = base.assumingMemoryBound(to: UInt8.self)
+        // pre-generated noise bands, a different one each frame (fresh per-pixel noise is too
+        // slow in a Debug build)
+        if bands.isEmpty {
+            var seed = rng
+            for _ in 0..<8 {
+                var band = [UInt32](repeating: 0, count: width * noiseRows)
+                for i in 0..<band.count { seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17; band[i] = UInt32(truncatingIfNeeded: seed) | 0xff00_0000 }
+                bands.append(band)
+            }
+            rng = seed
+        }
+        bandIndex = (bandIndex + 1) % bands.count
+        bands[bandIndex].withUnsafeBytes { src in
+            for y in 0..<noiseRows { memcpy(p + y * rowBytes, src.baseAddress! + y * width * 4, width * 4) }
+        }
+        for y in stride(from: height / 4, to: height / 4 + height / 8, by: 1) {
+            let row = p + y * rowBytes
+            for x in phase..<(phase + 40) { row[x * 4] = 200; row[x * 4 + 1] = 60; row[x * 4 + 2] = 60; row[x * 4 + 3] = 255 }
         }
     }
 }

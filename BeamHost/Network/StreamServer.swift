@@ -530,6 +530,8 @@ final class StreamServer {
 
     // MARK: - Capture Pipeline
 
+    private var syntheticSource: HarnessSyntheticSource?
+
     private func startCaptureIfNeeded() async {
         guard !captureStarted else { return }
         guard let display = await MainActor.run(body: { appState?.selectedDisplay }) else {
@@ -553,6 +555,22 @@ final class StreamServer {
                 pendingWindowSelection = window
                 await MainActor.run { self.appState?.isWindowMode = true }
             }
+        }
+        if Harness.isEnabled, Harness.experiment["synthetic"] != nil {
+            // Frames from a generator, not the screen: no Screen Recording grant involved.
+            let frameRate = max(negotiatedFrameRate(for: preset), Double(ProcessInfo.processInfo.environment["HARNESS_MAX_FPS"] ?? "") ?? 0)
+            videoEncoder.setInitialCodec(desiredVideoCodec())
+            videoEncoder.setInitialFrameSize(CGSize(width: preset.width, height: preset.height))
+            do { try videoEncoder.start() } catch { logger.error("Encoder start failed: \(error)"); return }
+            let source = HarnessSyntheticSource(width: preset.width, height: preset.height)
+            syntheticSource = source
+            source.start(frameRate: frameRate) { [weak self] sample in
+                guard let self else { return }
+                self.screenCapture(self.screenCapture, didOutputVideoFrame: sample)
+            }
+            captureStarted = true
+            logger.info("Harness: synthetic frame source at \(frameRate) fps, \(preset.width)x\(preset.height)")
+            return
         }
         let hadPendingWindowSelection = pendingWindowSelection != nil
         let resolvedPendingWindow = await resolvePendingWindowSelection()
