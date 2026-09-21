@@ -243,7 +243,7 @@ final class StreamSession {
 
             let deviceName = pairedDevices.first { $0.id == session.deviceID }?.name ?? session.deviceID
             server?.sessionAuthenticated(self, deviceName: deviceName)
-            if Harness.experiment["rtc"] != nil { offerRTC() }
+            if Self.offersRTC { offerRTC() }
             logger.info("Session authenticated for device '\(deviceName)' — audio \(self.wantsAudio ? self.negotiatedAudioCodec.wireName : "off"), video \(self.negotiatedVideoCodec.wireName)")
         }
     }
@@ -291,6 +291,12 @@ final class StreamSession {
             guard answer.kind == "rtc2", let peer = rtcPeer else { return }
             logger.info("rtc2 answer from \(answer.address)")
             peer.setRemote(info: answer.info, address: answer.address, nowMicros: 0)
+        case .transportFallback:
+            // the client's side of rtc2 failed; nothing to tell it back
+            rtcReady = false
+            rtcTransport?.cancel(); rtcTransport = nil; rtcPeer = nil
+            server?.requestKeyframeForRecovery()
+            logger.warning("client abandoned rtc2: media and input back on TCP")
         case .clockProbe(let probe):
             // Both host times on the clock video timestamps use, so the client can turn a
             // frame's presentation timestamp into an age.
@@ -407,9 +413,12 @@ final class StreamSession {
     private func startHeartbeat() {
         heartbeat = HeartbeatMonitor()
         let timer = DispatchSource.makeTimerSource(queue: stateQueue)
-        timer.schedule(deadline: .now() + 5, repeating: 5)
+        timer.schedule(deadline: .now() + 1, repeating: 0.25)
         timer.setEventHandler { [weak self] in
             guard let self, self.isAuthenticated else { return }
+            if self.rtcReady, let rtc = self.rtcTransport, rtc.isStalled(threshold: Self.rtcStallThreshold) {
+                self.fallBackFromRTC(reason: "no ack for \(Int(Self.rtcStallThreshold * 1000)) ms")
+            }
             if self.heartbeat.isTimedOut() {
                 logger.warning("Heartbeat timeout for session \(self.id) (\(Int(Date().timeIntervalSince(self.heartbeat.lastHeard)))s without traffic)")
                 self.disconnect()
@@ -419,7 +428,29 @@ final class StreamSession {
         heartbeatTimer = timer
     }
 
-    // MARK: - rtc2 (experimental)
+    // MARK: - rtc2
+
+    /// Media over UDP (Phoros 2) is offered to every client; a client that does not know
+    /// the offer keeps TCP. `BeaconLegacyTransport` in defaults, or BEACON_EXP=notrtc under
+    /// the harness, keeps everything on TCP.
+    static var offersRTC: Bool {
+        if Harness.isEnabled { return Harness.experiment["notrtc"] == nil }
+        return !UserDefaults.standard.bool(forKey: "BeaconLegacyTransport")
+    }
+
+    /// Frames went out on rtc2 and the client acknowledged none for this long: the link died
+    /// without ICE noticing. Media and input go back to TCP and the client is told.
+    private static let rtcStallThreshold: TimeInterval = 0.7
+
+    private func fallBackFromRTC(reason: String) {
+        guard rtcReady || rtcTransport != nil else { return }
+        rtcReady = false
+        rtcTransport?.cancel(); rtcTransport = nil; rtcPeer = nil
+        transport.sendControl(.transportFallback)
+        server?.requestKeyframeForRecovery()
+        if Harness.isEnabled { Harness.log("RTCX", 0, extra: reason) }
+        logger.warning("rtc2 abandoned (\(reason)): media and input back on TCP")
+    }
 
     /// Binds a UDP peer on the interface this client reached us on and offers it.
     private func offerRTC() {

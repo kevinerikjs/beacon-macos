@@ -20,11 +20,11 @@ echo "== phoros unit tests"
 
 # label | BEACON_EXP | SHAPE
 SCENARIOS="
-tcp_1080p120   |load,synthetic|
-rtc2_1080p120  |load,synthetic,rtc|
-tcp_1080p60    |load,synthetic|
-tcp_12mbps     |load,synthetic|--down-mbps 12 --delay-ms 5
-rtc2_drop2     |load,synthetic,rtc|
+tcp_1080p120   |load,synthetic,notrtc|
+rtc2_1080p120  |load,synthetic|
+tcp_1080p60    |load,synthetic,notrtc|
+tcp_12mbps     |load,synthetic,notrtc|--down-mbps 12 --delay-ms 5
+rtc2_drop2     |load,synthetic|
 "
 RESULTS=""
 while IFS='|' read -r label exp shape; do

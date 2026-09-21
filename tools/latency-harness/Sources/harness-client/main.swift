@@ -109,6 +109,13 @@ func makeDecoder(_ description: CMVideoFormatDescription) {
     decoder = session
 }
 
+/// CH: FNV-1a of the bitstream, in assembly order; the analyzer pairs host and client frames by it.
+func logHash(_ assembled: AssembledFrame) {
+    var h: UInt64 = 0xcbf29ce484222325
+    assembled.bitstream.withUnsafeBytes { buf in for b in buf { h = (h ^ UInt64(b)) &* 0x100000001b3 } }
+    log("CH", Int(assembled.frameNumber), extra: "\(h),\(assembled.isKeyframe ? 1 : 0)")
+}
+
 func decode(_ frame: AssembledFrame) {
     guard let formatDescription, let decoder,
           let sample = VideoFormat.makeSampleBuffer(annexB: frame.bitstream, formatDescription: formatDescription, presentationTime: CMTime(value: CMTimeValue(frame.presentationTimestamp), timescale: 1_000_000)) else { return }
@@ -133,6 +140,7 @@ link.onFrame = { frame in
                 if let assembled = assembler.receive(packet.payload, isKeyframe: packet.header.type == .videoKeyframe) {
                     framesReceived += 1
                     log("H7", Int(assembled.frameNumber), extra: "\(assembled.presentationTimestamp),\(assembled.bitstream.count)")
+                    logHash(assembled)
                     if let age = clock.age(ofPresentationTimestamp: assembled.presentationTimestamp, now: nowMicros()) {
                         log("A", Int(assembled.frameNumber), extra: "\(age)")   // frame age at assembly, host capture → here
                     }
@@ -175,6 +183,7 @@ func handleJSON(_ data: Data) {
     }
     if let control = try? JSONDecoder().decode(ControlMessage.self, from: data) {
         if case .transportOffer(let offer) = control, offer.kind == "rtc2" { acceptRTC(offer) }
+        if case .transportFallback = control { rtcReady = false; rtcTransport?.cancel(); rtcTransport = nil; log("RTC", 8, extra: "host fell back") }
         if case .clockReply(let reply) = control, let rtt = clock.reply(reply, now: nowMicros()) {
             // C: one clock sample (id = rtt µs, extra = offset µs, best rtt µs)
             log("C", Int(rtt), extra: "\(clock.offset ?? 0),\(clock.bestRoundTrip ?? 0)")
@@ -194,14 +203,13 @@ func acceptRTC(_ offer: TransportOffer) {
     let media = PhorosPeerTransport(peer: peer, queue: decodeQueue)
     media.onReady = { rtcReady = true; stderr("rtc2 connected"); log("RTC", 1) }
     media.onKeyframeNeeded = { log("NC", 0) }   // a frame after an unrepaired gap: the core sent a PLI
+    media.onEnd = { _ in rtcReady = false; log("RTC", 9, extra: "ended") }
     media.onInbound = { inbound in
         switch inbound {
         case .video(let assembled):
             framesReceived += 1
             log("H7", Int(assembled.frameNumber), extra: "\(assembled.presentationTimestamp),\(assembled.bitstream.count)")
-            var h: UInt64 = 0xcbf29ce484222325
-            assembled.bitstream.withUnsafeBytes { buf in for b in buf { h = (h ^ UInt64(b)) &* 0x100000001b3 } }
-            log("CH", Int(assembled.presentationTimestamp), extra: "\(h),\(assembled.isKeyframe ? 1 : 0)")
+            logHash(assembled)
             if let age = clock.age(ofPresentationTimestamp: assembled.presentationTimestamp, now: nowMicros()) { log("A", Int(assembled.frameNumber), extra: "\(age)") }
             decode(assembled)
         case .videoParameterSets(let sets, let codec):
@@ -227,11 +235,22 @@ func startController() {
     GCController.shouldMonitorBackgroundEvents = true
     sampler.accepts = { $0.productCategory.localizedCaseInsensitiveContains("dualshock") }
     sampler.onAttachmentChange = { attached in stderr("harness pad attached=\(attached)") }
+    var reportSequence: UInt16 = 0
     sampler.onReport = { report, connected in
+        var report = report
+        reportSequence &+= 1; report.sequence = reportSequence
+        log("RS", Int(reportSequence), extra: report.buttons.contains(.a) ? "down" : "up")
         let a = report.buttons.contains(.a)
         if a != lastA { lastA = a; inputTransitions += 1; log("H1", inputTransitions, extra: a ? "down" : "up") }
         if rtcReady, let rtcTransport { rtcTransport.sendInput(report, connected: connected) }
-        else { link.send(Packet.encode(.input, flags: connected ? ControllerReport.connectedFlag : 0, payload: report.serialized())) }
+        else {
+            let n = inputTransitions
+            let t0 = DispatchTime.now().uptimeNanoseconds
+            link.send(Packet.encode(.input, flags: connected ? ControllerReport.connectedFlag : 0, payload: report.serialized())) { _ in
+                // H1S: how long the TCP send took to be accepted by the kernel
+                if a != lastA || true { log("H1S", n, extra: "\((DispatchTime.now().uptimeNanoseconds - t0) / 1000)") }
+            }
+        }
     }
     sampler.start()
 }

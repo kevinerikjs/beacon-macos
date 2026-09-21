@@ -31,10 +31,10 @@ h7 = {e[1]: e for e in by(c, "H7")}; h8 = {e[1]: e for e in by(c, "H8")}
 # logged bitstream hashes (HH at the host keyed by PTS, CH at the client in assembly order),
 # map host frame -> hash -> client frame and re-key H7/H8 to host numbering.
 hh = {int(e[1]): e[3][0] for e in by(b, "HH")}            # pts_us -> hash
-ch = [e[3][0] for e in by(c, "CH")]                        # client frame index -> hash
+ch = [(e[1], e[3][0]) for e in by(c, "CH")]                # (client frame number, hash)
 if hh and ch:
     hash_to_client = {}
-    for i, h in enumerate(ch): hash_to_client.setdefault(h, i)
+    for f, h in ch: hash_to_client.setdefault(h, f)
     h6_pts_by_frame = {e[1]: int(e[3][0]) for e in by(b, "H6")}
     host_to_client = {fr: hash_to_client[hh[pts]] for fr, pts in h6_pts_by_frame.items() if pts in hh and hh[pts] in hash_to_client}
     client_to_host = {v: k for k, v in host_to_client.items()}
@@ -54,7 +54,13 @@ for pid in sorted(h0):
     r = {"id": pid}
     t0 = h0[pid][2]
     def d(a, b): return ms(b - a) if a is not None and b is not None else None
-    t1 = h1.get(pid, [None]*3)[2]; t2 = h2.get(pid, [None]*3)[2]; t3 = h3.get(pid, [None]*3)[2]; t4 = h4.get(pid, [None]*3)[2]
+    # The host numbers H2/H3/H4 by counting button transitions it saw; one report lost in
+    # transit shifts every later number by one. Pair by time instead: the first event of each
+    # kind after the press and before the next press.
+    def first_after(events, t, limit_ns=550_000_000):
+        cands = sorted(e[2] for e in events.values() if t <= e[2] < t + limit_ns)
+        return cands[0] if cands else None
+    t1 = first_after(h1, t0); t2 = first_after(h2, t0); t3 = first_after(h3, t0); t4 = first_after(h4, t0)
     r["h0_h1"] = d(t0, t1); r["h1_h2"] = d(t1, t2); r["h2_h3"] = d(t2, t3); r["h3_h4"] = d(t3, t4)
     if t4 is not None:
         # first captured frame whose PTS (host clock, us) is at/after the flip
