@@ -697,13 +697,18 @@ final class StreamServer {
 
     /// A phone asked for the window list (BEAM-35). Same enumeration as the Mac's own picker,
     /// but tighter: the phone has no thumbnails to tell a real window from Notification Center
-    /// chrome, so only layer-0 app windows with a title are offered, grouped by app.
+    /// chrome, so only layer-0 app windows with a title are offered, grouped by app. The one
+    /// exception is Picture in Picture, which floats on layer 3: Chrome's own window is titled
+    /// "Picture in Picture", Safari's and QuickTime's belong to the system PIPAgent.
     func handleWindowListRequest(from session: StreamSession) {
         Task {
             let windows = await ScreenCapture.availableWindows()
             let ownBundle = Bundle.main.bundleIdentifier
             let infos = windows.compactMap { window -> WindowInfo? in
-                guard window.windowLayer == 0,
+                let isPictureInPicture = window.windowLayer == 3
+                    && (window.title?.lowercased().contains("picture in picture") == true
+                        || window.owningApplication?.bundleIdentifier == "com.apple.PIPAgent")
+                guard window.windowLayer == 0 || isPictureInPicture,
                       let app = window.owningApplication,
                       app.bundleIdentifier != ownBundle,
                       let title = window.title, !title.isEmpty

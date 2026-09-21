@@ -29,7 +29,7 @@ restore() {
   kill $BEACON_PID 2>/dev/null || true; sleep 1
   # The build under test, never an older Beacon, from ~/Applications when the same build is
   # installed there: macOS keeps privacy grants per path, and the person's copy holds them.
-  RESTORE="$APP"; [ -d "$HOME/Applications/Beacon.app" ] && RESTORE="$HOME/Applications/Beacon.app"
+  RESTORE="$APP"; for c in "$HOME/Applications/Beacon.app" /Applications/Beacon.app; do [ -d "$c" ] && { RESTORE="$c"; break; }; done
   (nohup "$RESTORE/Contents/MacOS/Beacon" >/dev/null 2>&1 &)
 }
 trap restore EXIT

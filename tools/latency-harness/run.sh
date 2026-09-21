@@ -33,7 +33,7 @@ kill $BEACON_PID 2>/dev/null || true; sleep 1
 # copy in ~/Applications when there is one.
 # The build under test, never an older Beacon, from ~/Applications when the same build is
   # installed there: macOS keeps privacy grants per path, and the person's copy holds them.
-  RESTORE="$APP"; [ -d "$HOME/Applications/Beacon.app" ] && RESTORE="$HOME/Applications/Beacon.app"
+  RESTORE="$APP"; for c in "$HOME/Applications/Beacon.app" /Applications/Beacon.app; do [ -d "$c" ] && { RESTORE="$c"; break; }; done
   (nohup "$RESTORE/Contents/MacOS/Beacon" >/dev/null 2>&1 &)
 python3 "$HERE/analyze.py" "$OUT" | tee "$OUT/report.txt"
 echo "$OUT"
