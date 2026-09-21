@@ -386,7 +386,8 @@ final class StreamSession {
 
     /// A new preset: the controller's ceiling follows it, and it reports where it starts.
     /// The client's own ceiling (Phoros 1.4.1 `bitrateCapRequest`), applied under the preset's.
-    private var clientBitrateCap: Int?
+    /// PHOROS_MAX_BPS=<bps>: a harness switch, the same cap without a client asking for it.
+    private var clientBitrateCap: Int? = ProcessInfo.processInfo.environment["PHOROS_MAX_BPS"].flatMap(Int.init)
     private var presetBitrate: Int?
 
     func setMaximumBitrate(_ bitsPerSecond: Int) {
