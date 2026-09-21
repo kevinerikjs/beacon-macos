@@ -393,6 +393,7 @@ final class StreamSession {
     func setMaximumBitrate(_ bitsPerSecond: Int) {
         presetBitrate = bitsPerSecond
         transport.setMaximumBitrate(min(bitsPerSecond, clientBitrateCap ?? .max))
+        rtcTransport?.setMaximumBitrate(min(bitsPerSecond, clientBitrateCap ?? .max))
     }
 
     /// Whether the transport has room for another encoded frame. Read from the capture
@@ -427,13 +428,14 @@ final class StreamSession {
             host = "\(h)".split(separator: "%").first.map(String.init) ?? host
         }
         let address = "\(host):7981"
-        guard let peer = RealtimePeer(isHost: true, localAddress: address) else { return }
+        guard let peer = RealtimePeer(isHost: true, localAddress: address) else { if Harness.isEnabled { Harness.log("RTCF", 1, extra: address) }; return }
         let media = PhorosPeerTransport(peer: peer, queue: stateQueue)
         media.onReady = { [weak self] in
             guard let self else { return }
             self.stateQueue.async {
                 self.rtcReady = true
                 self.rtcEverReady = true
+                if let presetBitrate = self.presetBitrate { self.setMaximumBitrate(presetBitrate) }
                 logger.info("rtc2 connected, media moves to it")
                 // The decoder on the other side starts fresh: parameter sets and a keyframe.
                 self.server?.requestKeyframeForRecovery()
@@ -461,7 +463,8 @@ final class StreamSession {
         // PHOROS_ACK_CLOCK=1: hold each frame until the previous one is acknowledged (experiment)
         media.ackClocked = ProcessInfo.processInfo.environment["PHOROS_ACK_CLOCK"] == "1"
         if let w = ProcessInfo.processInfo.environment["PHOROS_ACK_WINDOW"].flatMap(UInt32.init) { media.ackWindow = w }
-        guard peer.runOwnSocket() == 0 else { rtcPeer = nil; rtcTransport = nil; return }
+        guard peer.runOwnSocket() == 0 else { if Harness.isEnabled { Harness.log("RTCF", 2, extra: address) }; rtcPeer = nil; rtcTransport = nil; return }
+        if Harness.isEnabled { Harness.log("RTCO", 0, extra: address) }
         transport.sendControl(.transportOffer(TransportOffer(kind: "rtc2", address: address, info: peer.localInfo)))
         logger.info("rtc2 offered at \(address)")
     }

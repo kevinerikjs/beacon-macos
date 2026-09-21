@@ -35,11 +35,28 @@ sleep 1.5
 # a fresh launch every time: the runner reads its arguments at init
 # the phone is often paired over the local network; the tunnel can time out, so retry
 launched=0
-for attempt in 1 2 3; do
-  if xcrun devicectl device process launch --terminate-existing --device "$DEVICE" "$BUNDLE" -- -harness "$HOST" "$PRESSES" "$INTERVAL" "$PRESET" ${HARNESS_EXTRA:-} >"$OUT/launch.txt" 2>&1; then launched=1; break; fi
-  sleep 3
-done
+PHONE_IP="${HARNESS_PHONE_IP:-192.168.18.45}"
+# A runner already on the phone takes the next run over TCP (port 7991): no devicectl, no
+# CoreDevice tunnel, no full-band Wi-Fi scan mid-run. Otherwise launch it once.
+if nc -z -w1 "$PHONE_IP" 7991 2>/dev/null; then
+  printf '%s\n' "-harness $HOST $PRESSES $INTERVAL $PRESET ${HARNESS_EXTRA:-}" | nc -w2 "$PHONE_IP" 7991 >/dev/null 2>&1 && launched=1
+  echo "run sent to the phone's runner" > "$OUT/launch.txt"
+fi
+if [ "$launched" != 1 ]; then
+  for attempt in 1 2 3; do
+    if xcrun devicectl device process launch --terminate-existing --device "$DEVICE" "$BUNDLE" -- -harness "$HOST" "$PRESSES" "$INTERVAL" "$PRESET" ${HARNESS_EXTRA:-} >"$OUT/launch.txt" 2>&1; then launched=1; break; fi
+    sleep 3
+  done
+fi
 [ "$launched" = 1 ] || { cat "$OUT/launch.txt"; exit 1; }
+# a run sent over the control port that has not connected within 8 s: relaunch through devicectl
+if grep -q 'run sent' "$OUT/launch.txt"; then
+  sleep 8
+  if [ "$(grep -c '^RTT' "$OUT/beacon.log" 2>/dev/null)" = 0 ]; then
+    xcrun devicectl device process launch --terminate-existing --device "$DEVICE" "$BUNDLE" -- -harness "$HOST" "$PRESSES" "$INTERVAL" "$PRESET" ${HARNESS_EXTRA:-} >"$OUT/launch.txt" 2>&1 || true
+    echo "control-port run did not connect; relaunched" >> "$OUT/launch.txt"
+  fi
+fi
 # devicectl brings up a CoreDevice tunnel (utun); SystemConfiguration flags a network
 # change and airportd answers with a ~3.5 s full-band scan that blacks out the Wi-Fi radio.
 # Nothing may call devicectl again until the run is over; the runner's first press waits
