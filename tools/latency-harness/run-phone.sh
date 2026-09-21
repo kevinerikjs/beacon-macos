@@ -27,7 +27,10 @@ BEACON_PID=$!
 restore() {
   kill $NC_PID 2>/dev/null || true
   kill $BEACON_PID 2>/dev/null || true; sleep 1
-  (nohup "$APP/Contents/MacOS/Beacon" >/dev/null 2>&1 &)  # the build under test, never an older Beacon
+  # The build under test, never an older Beacon, from ~/Applications when the same build is
+  # installed there: macOS keeps privacy grants per path, and the person's copy holds them.
+  RESTORE="$APP"; [ -d "$HOME/Applications/Beacon.app" ] && RESTORE="$HOME/Applications/Beacon.app"
+  (nohup "$RESTORE/Contents/MacOS/Beacon" >/dev/null 2>&1 &)
 }
 trap restore EXIT
 for i in $(seq 1 40); do nc -z 127.0.0.1 7979 2>/dev/null && break; sleep 0.25; done

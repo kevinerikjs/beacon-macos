@@ -31,6 +31,9 @@ kill $BEACON_PID 2>/dev/null || true; sleep 1
 # Bring the person's Beacon back. A Debug build launched from a shell inherits the shell's
 # Screen Recording grant; launched through LaunchServices it needs its own. Prefer the dev
 # copy in ~/Applications when there is one.
-(nohup "$APP/Contents/MacOS/Beacon" >/dev/null 2>&1 &)  # the build under test, never an older Beacon
+# The build under test, never an older Beacon, from ~/Applications when the same build is
+  # installed there: macOS keeps privacy grants per path, and the person's copy holds them.
+  RESTORE="$APP"; [ -d "$HOME/Applications/Beacon.app" ] && RESTORE="$HOME/Applications/Beacon.app"
+  (nohup "$RESTORE/Contents/MacOS/Beacon" >/dev/null 2>&1 &)
 python3 "$HERE/analyze.py" "$OUT" | tee "$OUT/report.txt"
 echo "$OUT"

@@ -144,6 +144,8 @@ final class StreamSession {
     // MARK: - Inbound
 
     private var lastInputSequence: UInt16?
+    private var inputsReceived = 0
+    private var lastLoggedButtons = ControllerReport.Buttons()
 
     private func handleInbound(_ inbound: RealtimeInbound, via pipe: String = "tcp") {
         heartbeat.heard()
@@ -160,6 +162,11 @@ final class StreamSession {
                 }
                 lastInputSequence = sequence
                 if Harness.isEnabled { Harness.log("H2W", Int(sequence), extra: pipe) }   // the copy that won
+            }
+            inputsReceived += 1
+            if report.buttons != lastLoggedButtons || inputsReceived == 1 {
+                lastLoggedButtons = report.buttons
+                logger.info("report #\(self.inputsReceived) via \(pipe, privacy: .public), buttons=\(report.buttons.rawValue, privacy: .public)")
             }
             if Harness.isEnabled {
                 // rtc2: how long ago the datagram carrying this report left the socket (H2R)
@@ -459,7 +466,7 @@ final class StreamSession {
             host = "\(h)".split(separator: "%").first.map(String.init) ?? host
         }
         let address = "\(host):7981"
-        guard let peer = RealtimePeer(isHost: true, localAddress: address) else { if Harness.isEnabled { Harness.log("RTCF", 1, extra: address) }; return }
+        guard let peer = RealtimePeer(isHost: true, localAddress: address) else { logger.warning("rtc2: peer creation failed at \(address)"); if Harness.isEnabled { Harness.log("RTCF", 1, extra: address) }; return }
         let media = PhorosPeerTransport(peer: peer, queue: stateQueue)
         media.onReady = { [weak self] in
             guard let self else { return }
@@ -494,9 +501,12 @@ final class StreamSession {
         // PHOROS_ACK_CLOCK=1: hold each frame until the previous one is acknowledged (experiment)
         media.ackClocked = ProcessInfo.processInfo.environment["PHOROS_ACK_CLOCK"] == "1"
         if let w = ProcessInfo.processInfo.environment["PHOROS_ACK_WINDOW"].flatMap(UInt32.init) { media.ackWindow = w }
-        guard peer.runOwnSocket() == 0 else { if Harness.isEnabled { Harness.log("RTCF", 2, extra: address) }; rtcPeer = nil; rtcTransport = nil; return }
+        guard peer.runOwnSocket() == 0 else { logger.warning("rtc2: bind failed at \(address)"); if Harness.isEnabled { Harness.log("RTCF", 2, extra: address) }; rtcPeer = nil; rtcTransport = nil; return }
         if Harness.isEnabled { Harness.log("RTCO", 0, extra: address) }
-        transport.sendControl(.transportOffer(TransportOffer(kind: "rtc2", address: address, info: peer.localInfo)))
+        // The host clock rides along so the client can put RTP's 32-bit timestamps back on the
+        // full timeline the audio chunks use (A/V sync on the client anchors audio to video).
+        transport.sendControl(.transportOffer(TransportOffer(kind: "rtc2", address: address, info: peer.localInfo,
+                                                             hostMicros: CMClockGetTime(CMClockGetHostTimeClock()).microseconds)))
         logger.info("rtc2 offered at \(address)")
     }
 
@@ -526,6 +536,8 @@ final class StreamSession {
         // sessions that negotiated it, but a fan-out bug must never be able to put AAC
         // bytes on a legacy wire: that is white noise into someone's headphones.
         guard isAuthenticated, wantsAudio, codec == negotiatedAudioCodec else { return }
+        // HA: one audio chunk handed to the transport (id = pts µs, extra = bytes, hash)
+        Harness.log("HA", Int(pts.microseconds), extra: "\(audioData.count),\(Harness.hash(audioData))")
         media.sendAudio(audioData, codec: codec, presentationTimestamp: pts.microseconds)
     }
 }

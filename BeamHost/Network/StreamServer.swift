@@ -531,6 +531,7 @@ final class StreamServer {
     // MARK: - Capture Pipeline
 
     private var syntheticSource: HarnessSyntheticSource?
+    private var syntheticAudio: HarnessSyntheticAudio?
 
     private func startCaptureIfNeeded() async {
         guard !captureStarted else { return }
@@ -568,8 +569,19 @@ final class StreamServer {
                 guard let self else { return }
                 self.screenCapture(self.screenCapture, didOutputVideoFrame: sample)
             }
+            // The audio twin, when the client asked for audio: a steady tone through the real
+            // encoder and scheduler, so the audio harness measures the shipped path.
+            if anySessionWantsAudio {
+                try? audioEncoder.start()
+                let audio = HarnessSyntheticAudio()
+                syntheticAudio = audio
+                audio.start { [weak self] sample in
+                    guard let self else { return }
+                    self.screenCapture(self.screenCapture, didOutputAudioFrame: sample)
+                }
+            }
             captureStarted = true
-            logger.info("Harness: synthetic frame source at \(frameRate) fps, \(preset.width)x\(preset.height)")
+            logger.info("Harness: synthetic frame source at \(frameRate) fps, \(preset.width)x\(preset.height), audio \(self.anySessionWantsAudio)")
             return
         }
         let hadPendingWindowSelection = pendingWindowSelection != nil

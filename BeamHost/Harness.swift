@@ -377,3 +377,52 @@ final class HarnessSyntheticSource {
         }
     }
 }
+
+/// Audio from a generator, the audio twin of `HarnessSyntheticSource`: a steady 1 kHz tone in
+/// 10 ms chunks (480 frames at 48 kHz, stereo Float32, what ScreenCaptureKit hands Beacon),
+/// stamped on the host clock like the synthetic frames so the client can measure audio
+/// against the video timeline it anchors on. The tone is continuous across chunks, so a
+/// receiver can check the bitstream sample by sample, and PCM is lossless on the wire, so a
+/// per-chunk hash on both ends catches every lost or damaged chunk.
+final class HarnessSyntheticAudio {
+    private var timer: DispatchSourceTimer?
+    private var format: CMAudioFormatDescription?
+    private var phase: Double = 0
+    static let sampleRate = 48_000.0
+    static let framesPerChunk = 480
+
+    func start(sink: @escaping (CMSampleBuffer) -> Void) {
+        var asbd = AudioStreamBasicDescription(mSampleRate: Self.sampleRate, mFormatID: kAudioFormatLinearPCM,
+                                               mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked,
+                                               mBytesPerPacket: 8, mFramesPerPacket: 1, mBytesPerFrame: 8,
+                                               mChannelsPerFrame: 2, mBitsPerChannel: 32, mReserved: 0)
+        CMAudioFormatDescriptionCreate(allocator: nil, asbd: &asbd, layoutSize: 0, layout: nil, magicCookieSize: 0, magicCookie: nil, extensions: nil, formatDescriptionOut: &format)
+        let t = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "beam.harness.synthetic-audio", qos: .userInteractive))
+        t.schedule(deadline: .now(), repeating: Double(Self.framesPerChunk) / Self.sampleRate, leeway: .microseconds(200))
+        t.setEventHandler { [weak self] in
+            guard let self, let format = self.format, let sample = self.makeChunk(format) else { return }
+            sink(sample)
+        }
+        t.resume(); timer = t
+    }
+
+    private func makeChunk(_ format: CMAudioFormatDescription) -> CMSampleBuffer? {
+        let frames = Self.framesPerChunk
+        var samples = [Float32](repeating: 0, count: frames * 2)
+        let step = 2 * Double.pi * 1000 / Self.sampleRate
+        for i in 0..<frames {
+            let v = Float32(sin(phase) * 0.5)
+            samples[i * 2] = v; samples[i * 2 + 1] = v
+            phase += step
+            if phase > 2 * Double.pi { phase -= 2 * Double.pi }
+        }
+        let bytes = samples.count * 4
+        var block: CMBlockBuffer?
+        guard CMBlockBufferCreateWithMemoryBlock(allocator: nil, memoryBlock: nil, blockLength: bytes, blockAllocator: nil, customBlockSource: nil, offsetToData: 0, dataLength: bytes, flags: 0, blockBufferOut: &block) == noErr, let block else { return nil }
+        samples.withUnsafeBytes { CMBlockBufferReplaceDataBytes(with: $0.baseAddress!, blockBuffer: block, offsetIntoDestination: 0, dataLength: bytes) }
+        var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: Int32(Self.sampleRate)), presentationTimeStamp: CMClockGetTime(CMClockGetHostTimeClock()), decodeTimeStamp: .invalid)
+        var sample: CMSampleBuffer?
+        CMSampleBufferCreate(allocator: nil, dataBuffer: block, dataReady: true, makeDataReadyCallback: nil, refcon: nil, formatDescription: format, sampleCount: frames, sampleTimingEntryCount: 1, sampleTimingArray: &timing, sampleSizeEntryCount: 0, sampleSizeArray: nil, sampleBufferOut: &sample)
+        return sample
+    }
+}
