@@ -310,7 +310,6 @@
 			packageReferences = (
 				AA11BB22CC33DD44EE55FF66 /* XCRemoteSwiftPackageReference "Sparkle" */,
 				BEEA00000000000000000011 /* XCRemoteSwiftPackageReference "phoros" */,
-				BEEA00000000000000000030 /* XCLocalSwiftPackageReference "../phoros/Core" */,
 			);
 			projectDirPath = "";
 			projectRoot = "";
@@ -391,8 +390,8 @@
 				);
 				LE_TEXT_BASE_ADDRESS = 0;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				CURRENT_PROJECT_VERSION = 24;
-				MARKETING_VERSION = 1.5.1;
+				CURRENT_PROJECT_VERSION = 25;
+				MARKETING_VERSION = 1.6.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.beam.beacon;
 				PRODUCT_NAME = Beacon;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -444,8 +443,8 @@
 				);
 				LE_TEXT_BASE_ADDRESS = 0;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				CURRENT_PROJECT_VERSION = 24;
-				MARKETING_VERSION = 1.5.1;
+				CURRENT_PROJECT_VERSION = 25;
+				MARKETING_VERSION = 1.6.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.beam.beacon;
 				PRODUCT_NAME = Beacon;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -513,16 +512,12 @@
 				minimumVersion = 2.0.0;
 			};
 		};
-		BEEA00000000000000000030 /* XCLocalSwiftPackageReference "../phoros/Core" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = ../phoros/Core;
-		};
 		BEEA00000000000000000011 /* XCRemoteSwiftPackageReference "phoros" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/kevinerikjs/phoros.git";
 			requirement = {
 				kind = exactVersion;
-				version = "1.4.1";
+				version = "1.4.2";
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
@@ -560,7 +555,7 @@
 		};
 		BEEA00000000000000000031 /* PhorosCore */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = BEEA00000000000000000030 /* XCLocalSwiftPackageReference "../phoros/Core" */;
+			package = BEEA00000000000000000001 /* XCRemoteSwiftPackageReference "phoros" */;
 			productName = PhorosCore;
 		};
 /* End XCSwiftPackageProductDependency section */
