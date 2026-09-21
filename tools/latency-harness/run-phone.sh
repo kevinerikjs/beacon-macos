@@ -14,15 +14,23 @@ DEVICE="${HARNESS_DEVICE:-$(xcrun devicectl list devices 2>/dev/null | grep -i '
 HOST="${HARNESS_HOST:-$(route -n get default 2>/dev/null | awk '/interface:/{print $2}' | xargs ipconfig getifaddr)}"
 BUNDLE="com.beamapp.ios"
 echo "device=$DEVICE host=$HOST out=$OUT"
-pkill -x Beacon 2>/dev/null || true; sleep 1
+pkill -x Beacon 2>/dev/null || true
+for i in $(seq 1 50); do pgrep -x Beacon >/dev/null 2>&1 || break; sleep 0.2; done   # the old Beacon must be gone, not just its listener
+pkill -9 -x Beacon 2>/dev/null || true
+sleep 0.5
 # the phone pushes its log here when the run ends (HarnessRunner.uploadLog)
+pkill -f 'nc -l 7990' 2>/dev/null || true   # a listener left by an aborted run would swallow the push
 ( nc -l 7990 > "$OUT/client.push" 2>/dev/null ) &
 NC_PID=$!
 BEACON_HARNESS=1 BEACON_HARNESS_LOG="$OUT/beacon.log" "$APP/Contents/MacOS/Beacon" >"$OUT/beacon.stdout" 2>&1 &
 BEACON_PID=$!
 restore() {
+  kill $NC_PID 2>/dev/null || true
   kill $BEACON_PID 2>/dev/null || true; sleep 1
-  (nohup "$APP/Contents/MacOS/Beacon" >/dev/null 2>&1 &)  # the build under test, never an older Beacon
+  # The build under test, never an older Beacon, from ~/Applications when the same build is
+  # installed there: macOS keeps privacy grants per path, and the person's copy holds them.
+  RESTORE="$APP"; [ -d "$HOME/Applications/Beacon.app" ] && RESTORE="$HOME/Applications/Beacon.app"
+  (nohup "$RESTORE/Contents/MacOS/Beacon" >/dev/null 2>&1 &)
 }
 trap restore EXIT
 for i in $(seq 1 40); do nc -z 127.0.0.1 7979 2>/dev/null && break; sleep 0.25; done
@@ -30,11 +38,32 @@ sleep 1.5
 # a fresh launch every time: the runner reads its arguments at init
 # the phone is often paired over the local network; the tunnel can time out, so retry
 launched=0
-for attempt in 1 2 3; do
-  if xcrun devicectl device process launch --terminate-existing --device "$DEVICE" "$BUNDLE" -harness "$HOST" "$PRESSES" "$INTERVAL" "$PRESET" ${HARNESS_EXTRA:-} >"$OUT/launch.txt" 2>&1; then launched=1; break; fi
-  sleep 3
-done
+PHONE_IP="${HARNESS_PHONE_IP:-192.168.18.45}"
+# A runner already on the phone takes the next run over TCP (port 7991): no devicectl, no
+# CoreDevice tunnel, no full-band Wi-Fi scan mid-run. Otherwise launch it once.
+if nc -z -w1 "$PHONE_IP" 7991 2>/dev/null; then
+  printf '%s\n' "-harness $HOST $PRESSES $INTERVAL $PRESET ${HARNESS_EXTRA:-}" | nc -w2 "$PHONE_IP" 7991 >/dev/null 2>&1 && launched=1
+  echo "run sent to the phone's runner" > "$OUT/launch.txt"
+fi
+if [ "$launched" != 1 ]; then
+  for attempt in 1 2 3; do
+    if xcrun devicectl device process launch --terminate-existing --device "$DEVICE" "$BUNDLE" -- -harness "$HOST" "$PRESSES" "$INTERVAL" "$PRESET" ${HARNESS_EXTRA:-} >"$OUT/launch.txt" 2>&1; then launched=1; break; fi
+    sleep 3
+  done
+fi
 [ "$launched" = 1 ] || { cat "$OUT/launch.txt"; exit 1; }
+# a run sent over the control port that has not connected within 8 s: relaunch through devicectl
+if grep -q 'run sent' "$OUT/launch.txt"; then
+  sleep 8
+  if [ "$(grep -c '^RTT' "$OUT/beacon.log" 2>/dev/null)" = 0 ]; then
+    xcrun devicectl device process launch --terminate-existing --device "$DEVICE" "$BUNDLE" -- -harness "$HOST" "$PRESSES" "$INTERVAL" "$PRESET" ${HARNESS_EXTRA:-} >"$OUT/launch.txt" 2>&1 || true
+    echo "control-port run did not connect; relaunched" >> "$OUT/launch.txt"
+  fi
+fi
+# devicectl brings up a CoreDevice tunnel (utun); SystemConfiguration flags a network
+# change and airportd answers with a ~3.5 s full-band scan that blacks out the Wi-Fi radio.
+# Nothing may call devicectl again until the run is over; the runner's first press waits
+# out this one (HarnessRunner starts pressing ~8 s after launch).
 # devicectl will not overwrite a destination: copy to a fresh name, then move into place
 fetch_log() {
   # the wireless tunnel copy can hang for good: bound each attempt to 40 s
@@ -46,7 +75,7 @@ fetch_log() {
   if [ -s "$OUT/client.tmp" ]; then mv -f "$OUT/client.tmp" "$OUT/client.log"; fi
 }
 # wait for the phone to push its log (falls back to the tunnel copy if it never does)
-DEADLINE=$(( $(date +%s) + 30 + PRESSES * (INTERVAL + 200) / 1000 ))
+DEADLINE=$(( $(date +%s) + 50 + PRESSES * (INTERVAL + 200) / 1000 ))
 while [ "$(date +%s)" -lt "$DEADLINE" ]; do
   sleep 2
   if [ -s "$OUT/client.push" ] && ! kill -0 $NC_PID 2>/dev/null; then mv -f "$OUT/client.push" "$OUT/client.log"; break; fi

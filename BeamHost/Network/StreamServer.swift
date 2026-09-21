@@ -206,6 +206,7 @@ final class StreamServer {
     /// Coalesced: many drops in one burst produce one request.
     private var keyframeRecoveryPending = false
     func requestKeyframeForRecovery() {
+        if Harness.isEnabled { Harness.log("KFR", keyframeRecoveryPending ? 0 : 1) }   // 1 = honoured, 0 = throttled
         guard !keyframeRecoveryPending else { return }
         keyframeRecoveryPending = true
         videoEncoder.requestKeyframe()
@@ -529,6 +530,9 @@ final class StreamServer {
 
     // MARK: - Capture Pipeline
 
+    private var syntheticSource: HarnessSyntheticSource?
+    private var syntheticAudio: HarnessSyntheticAudio?
+
     private func startCaptureIfNeeded() async {
         guard !captureStarted else { return }
         guard let display = await MainActor.run(body: { appState?.selectedDisplay }) else {
@@ -552,6 +556,33 @@ final class StreamServer {
                 pendingWindowSelection = window
                 await MainActor.run { self.appState?.isWindowMode = true }
             }
+        }
+        if Harness.isEnabled, Harness.experiment["synthetic"] != nil {
+            // Frames from a generator, not the screen: no Screen Recording grant involved.
+            let frameRate = max(negotiatedFrameRate(for: preset), Double(ProcessInfo.processInfo.environment["HARNESS_MAX_FPS"] ?? "") ?? 0)
+            videoEncoder.setInitialCodec(desiredVideoCodec())
+            videoEncoder.setInitialFrameSize(CGSize(width: preset.width, height: preset.height))
+            do { try videoEncoder.start() } catch { logger.error("Encoder start failed: \(error)"); return }
+            let source = HarnessSyntheticSource(width: preset.width, height: preset.height)
+            syntheticSource = source
+            source.start(frameRate: frameRate) { [weak self] sample in
+                guard let self else { return }
+                self.screenCapture(self.screenCapture, didOutputVideoFrame: sample)
+            }
+            // The audio twin, when the client asked for audio: a steady tone through the real
+            // encoder and scheduler, so the audio harness measures the shipped path.
+            if anySessionWantsAudio {
+                try? audioEncoder.start()
+                let audio = HarnessSyntheticAudio()
+                syntheticAudio = audio
+                audio.start { [weak self] sample in
+                    guard let self else { return }
+                    self.screenCapture(self.screenCapture, didOutputAudioFrame: sample)
+                }
+            }
+            captureStarted = true
+            logger.info("Harness: synthetic frame source at \(frameRate) fps, \(preset.width)x\(preset.height), audio \(self.anySessionWantsAudio)")
+            return
         }
         let hadPendingWindowSelection = pendingWindowSelection != nil
         let resolvedPendingWindow = await resolvePendingWindowSelection()

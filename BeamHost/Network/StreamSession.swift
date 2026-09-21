@@ -17,6 +17,7 @@ import Phoros
 import PhorosInput
 import PhorosNetwork
 import PhorosSession
+import PhorosCore
 
 private let logger = Logger(subsystem: "com.beam.beacon", category: "StreamSession")
 
@@ -26,6 +27,14 @@ final class StreamSession {
 
     private let transport: PhorosLegacyTransport
     private weak var server: StreamServer?
+
+    /// Experimental second transport (BEACON_EXP=rtc, BEAM-54): ICE, DTLS and SCTP over
+    /// UDP through PhorosCore. Offered after authentication; once it connects, media and
+    /// input move to it and control stays on TCP.
+    private var rtcPeer: RealtimePeer?
+    private var rtcTransport: PhorosPeerTransport?
+    private var rtcReady = false
+    private var rtcEverReady = false
 
     private(set) var isAuthenticated = false
 
@@ -72,7 +81,7 @@ final class StreamSession {
             guard let self else { return }
             logger.info("Session TCP connection ready from \(String(describing: self.transport.link.connection.endpoint))")
         }
-        transport.onInbound = { [weak self] inbound in self?.handleInbound(inbound) }
+        transport.onInbound = { [weak self] inbound in self?.handleInbound(inbound, via: "tcp") }
         transport.onKeyframeNeeded = { [weak self] in
             // A shed or refused delta frame leaves the decoder with a broken reference chain
             // until the next keyframe. Ask for one now instead of waiting for the periodic one.
@@ -127,19 +136,43 @@ final class StreamSession {
         heartbeatTimer?.cancel()
         heartbeatTimer = nil
         gamepad.release()
+        rtcTransport?.cancel()
         transport.cancel()
         logger.info("Session \(self.id) disconnected")
     }
 
     // MARK: - Inbound
 
-    private func handleInbound(_ inbound: RealtimeInbound) {
+    private var lastInputSequence: UInt16?
+    private var inputsReceived = 0
+    private var lastLoggedButtons = ControllerReport.Buttons()
+
+    private func handleInbound(_ inbound: RealtimeInbound, via pipe: String = "tcp") {
         heartbeat.heard()
         switch inbound {
         case .input(let report, let connected):
             // Ignored until the client authenticates.
             guard isAuthenticated, ControllerPassthrough.isEnabled else { return }
-            if Harness.isEnabled { Harness.inputReceived(report) }
+            // A client sending on two transports numbers its reports: the first copy wins,
+            // a copy that is not newer than what was applied is dropped.
+            if let sequence = report.sequence {
+                if let last = lastInputSequence, !ControllerReport.isNewer(sequence, than: last) {
+                    if Harness.isEnabled { Harness.log("H2X", Int(sequence), extra: pipe) }   // the late copy
+                    return
+                }
+                lastInputSequence = sequence
+                if Harness.isEnabled { Harness.log("H2W", Int(sequence), extra: pipe) }   // the copy that won
+            }
+            inputsReceived += 1
+            if report.buttons != lastLoggedButtons || inputsReceived == 1 {
+                lastLoggedButtons = report.buttons
+                logger.info("report #\(self.inputsReceived) via \(pipe, privacy: .public), buttons=\(report.buttons.rawValue, privacy: .public)")
+            }
+            if Harness.isEnabled {
+                // rtc2: how long ago the datagram carrying this report left the socket (H2R)
+                if pipe == "rtc", let peer = rtcPeer { Harness.log("H2R", Int(peer.sinceLastReceive())) }
+                Harness.inputReceived(report)
+            }
             gamepad.handle(report, connected: connected)
             if Harness.isEnabled { Harness.inputPosted() }
         case .control(let message):
@@ -217,6 +250,7 @@ final class StreamSession {
 
             let deviceName = pairedDevices.first { $0.id == session.deviceID }?.name ?? session.deviceID
             server?.sessionAuthenticated(self, deviceName: deviceName)
+            if Self.offersRTC { offerRTC() }
             logger.info("Session authenticated for device '\(deviceName)' — audio \(self.wantsAudio ? self.negotiatedAudioCodec.wireName : "off"), video \(self.negotiatedVideoCodec.wireName)")
         }
     }
@@ -258,6 +292,18 @@ final class StreamSession {
             MediaKeyDispatcher.send(command)
         case .pong, .ping:
             break  // the transport measures the round trip and answers pings
+        case .transportOffer:
+            break  // a host never receives offers
+        case .transportAnswer(let answer):
+            guard answer.kind == "rtc2", let peer = rtcPeer else { return }
+            logger.info("rtc2 answer from \(answer.address)")
+            peer.setRemote(info: answer.info, address: answer.address, nowMicros: 0)
+        case .transportFallback:
+            // the client's side of rtc2 failed; nothing to tell it back
+            rtcReady = false
+            rtcTransport?.cancel(); rtcTransport = nil; rtcPeer = nil
+            server?.requestKeyframeForRecovery()
+            logger.warning("client abandoned rtc2: media and input back on TCP")
         case .clockProbe(let probe):
             // Both host times on the clock video timestamps use, so the client can turn a
             // frame's presentation timestamp into an age.
@@ -353,28 +399,33 @@ final class StreamSession {
 
     /// A new preset: the controller's ceiling follows it, and it reports where it starts.
     /// The client's own ceiling (Phoros 1.4.1 `bitrateCapRequest`), applied under the preset's.
-    private var clientBitrateCap: Int?
+    /// PHOROS_MAX_BPS=<bps>: a harness switch, the same cap without a client asking for it.
+    private var clientBitrateCap: Int? = ProcessInfo.processInfo.environment["PHOROS_MAX_BPS"].flatMap(Int.init)
     private var presetBitrate: Int?
 
     func setMaximumBitrate(_ bitsPerSecond: Int) {
         presetBitrate = bitsPerSecond
         transport.setMaximumBitrate(min(bitsPerSecond, clientBitrateCap ?? .max))
+        rtcTransport?.setMaximumBitrate(min(bitsPerSecond, clientBitrateCap ?? .max))
     }
 
     /// Whether the transport has room for another encoded frame. Read from the capture
     /// thread before the encode, so a frame the link cannot take is skipped for free.
     var acceptsVideoFrame: Bool {
         guard isAuthenticated, !hold.isHeld else { return true }
-        return transport.acceptsVideoFrame
+        return media.acceptsVideoFrame
     }
 
     /// The heartbeat timeout is Beacon's policy; the packets themselves come from the transport.
     private func startHeartbeat() {
         heartbeat = HeartbeatMonitor()
         let timer = DispatchSource.makeTimerSource(queue: stateQueue)
-        timer.schedule(deadline: .now() + 5, repeating: 5)
+        timer.schedule(deadline: .now() + 1, repeating: 0.25)
         timer.setEventHandler { [weak self] in
             guard let self, self.isAuthenticated else { return }
+            if self.rtcReady, let rtc = self.rtcTransport, rtc.isStalled(threshold: Self.rtcStallThreshold) {
+                self.fallBackFromRTC(reason: "no ack for \(Int(Self.rtcStallThreshold * 1000)) ms")
+            }
             if self.heartbeat.isTimedOut() {
                 logger.warning("Heartbeat timeout for session \(self.id) (\(Int(Date().timeIntervalSince(self.heartbeat.lastHeard)))s without traffic)")
                 self.disconnect()
@@ -384,16 +435,98 @@ final class StreamSession {
         heartbeatTimer = timer
     }
 
+    // MARK: - rtc2
+
+    /// Media over UDP (Phoros 2) is offered to every client; a client that does not know
+    /// the offer keeps TCP. `BeaconLegacyTransport` in defaults, or BEACON_EXP=notrtc under
+    /// the harness, keeps everything on TCP.
+    static var offersRTC: Bool {
+        if Harness.isEnabled { return Harness.experiment["notrtc"] == nil }
+        return !UserDefaults.standard.bool(forKey: "BeaconLegacyTransport")
+    }
+
+    /// Frames went out on rtc2 and the client acknowledged none for this long: the link died
+    /// without ICE noticing. Media and input go back to TCP and the client is told.
+    private static let rtcStallThreshold: TimeInterval = 0.7
+
+    private func fallBackFromRTC(reason: String) {
+        guard rtcReady || rtcTransport != nil else { return }
+        rtcReady = false
+        rtcTransport?.cancel(); rtcTransport = nil; rtcPeer = nil
+        transport.sendControl(.transportFallback)
+        server?.requestKeyframeForRecovery()
+        if Harness.isEnabled { Harness.log("RTCX", 0, extra: reason) }
+        logger.warning("rtc2 abandoned (\(reason)): media and input back on TCP")
+    }
+
+    /// Binds a UDP peer on the interface this client reached us on and offers it.
+    private func offerRTC() {
+        var host = "127.0.0.1"
+        if let local = transport.link.connection.currentPath?.localEndpoint, case .hostPort(let h, _) = local {
+            host = "\(h)".split(separator: "%").first.map(String.init) ?? host
+        }
+        let address = "\(host):7981"
+        guard let peer = RealtimePeer(isHost: true, localAddress: address) else { logger.warning("rtc2: peer creation failed at \(address)"); if Harness.isEnabled { Harness.log("RTCF", 1, extra: address) }; return }
+        let media = PhorosPeerTransport(peer: peer, queue: stateQueue)
+        media.onReady = { [weak self] in
+            guard let self else { return }
+            self.stateQueue.async {
+                self.rtcReady = true
+                self.rtcEverReady = true
+                if let presetBitrate = self.presetBitrate { self.setMaximumBitrate(presetBitrate) }
+                logger.info("rtc2 connected, media moves to it")
+                // The decoder on the other side starts fresh: parameter sets and a keyframe.
+                self.server?.requestKeyframeForRecovery()
+            }
+        }
+        media.onInbound = { [weak self] inbound in self?.handleInbound(inbound, via: "rtc") }
+        // A radio stall long enough for ICE to give up must not end the session: video goes
+        // back to TCP until the link is up again, each switch starting with a keyframe.
+        media.onLinkStateChange = { [weak self] up in
+            guard let self else { return }
+            self.stateQueue.async {
+                guard self.rtcTransport != nil, self.rtcReady != up, self.rtcEverReady || up else { return }
+                self.rtcReady = up
+                self.rtcEverReady = true
+                logger.info("rtc2 link \(up ? "up: media back on it" : "down: media falls back to TCP")")
+                self.server?.requestKeyframeForRecovery()
+            }
+        }
+        media.onKeyframeNeeded = { [weak self] in self?.server?.requestKeyframeForRecovery() }
+        media.onTrace = transport.onTrace
+        rtcPeer = peer
+        rtcTransport = media
+        // PHOROS_UDP_CLASS=0|3|4: the peer socket's service class (harness experiment)
+        if let c = ProcessInfo.processInfo.environment["PHOROS_UDP_CLASS"].flatMap(Int32.init) { peer.setServiceClass(c) }
+        // PHOROS_ACK_CLOCK=1: hold each frame until the previous one is acknowledged (experiment)
+        media.ackClocked = ProcessInfo.processInfo.environment["PHOROS_ACK_CLOCK"] == "1"
+        if let w = ProcessInfo.processInfo.environment["PHOROS_ACK_WINDOW"].flatMap(UInt32.init) { media.ackWindow = w }
+        guard peer.runOwnSocket() == 0 else { logger.warning("rtc2: bind failed at \(address)"); if Harness.isEnabled { Harness.log("RTCF", 2, extra: address) }; rtcPeer = nil; rtcTransport = nil; return }
+        if Harness.isEnabled { Harness.log("RTCO", 0, extra: address) }
+        // The host clock rides along so the client can put RTP's 32-bit timestamps back on the
+        // full timeline the audio chunks use (A/V sync on the client anchors audio to video).
+        transport.sendControl(.transportOffer(TransportOffer(kind: "rtc2", address: address, info: peer.localInfo,
+                                                             hostMicros: CMClockGetTime(CMClockGetHostTimeClock()).microseconds)))
+        logger.info("rtc2 offered at \(address)")
+    }
+
     // MARK: - Send Video
 
     func send(spsPps data: Data, codec: VideoCodecID) {
         guard isAuthenticated else { return }
-        transport.sendVideoParameterSets(data, codec: codec)
+        media.sendVideoParameterSets(data, codec: codec)
     }
 
     func send(videoData: Data, pts: CMTime, isKeyframe: Bool) {
         guard isAuthenticated, !hold.isHeld else { return }
-        transport.sendVideo(videoData, presentationTimestamp: pts.microseconds, isKeyframe: isKeyframe)
+        if Harness.isEnabled { Harness.log("HH", Int(pts.microseconds), extra: "\(Harness.hash(videoData)),\(isKeyframe ? 1 : 0)") }
+        media.sendVideo(videoData, presentationTimestamp: pts.microseconds, isKeyframe: isKeyframe)
+    }
+
+    /// The transport carrying media right now: rtc2 once it is connected, TCP otherwise.
+    private var media: PhorosRealtimeTransport {
+        if rtcReady, let rtcTransport { return rtcTransport }
+        return transport
     }
 
     // MARK: - Send Audio
@@ -403,6 +536,8 @@ final class StreamSession {
         // sessions that negotiated it, but a fan-out bug must never be able to put AAC
         // bytes on a legacy wire: that is white noise into someone's headphones.
         guard isAuthenticated, wantsAudio, codec == negotiatedAudioCodec else { return }
-        transport.sendAudio(audioData, codec: codec, presentationTimestamp: pts.microseconds)
+        // HA: one audio chunk handed to the transport (id = pts µs, extra = bytes, hash)
+        Harness.log("HA", Int(pts.microseconds), extra: "\(audioData.count),\(Harness.hash(audioData))")
+        media.sendAudio(audioData, codec: codec, presentationTimestamp: pts.microseconds)
     }
 }

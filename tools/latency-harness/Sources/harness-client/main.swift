@@ -19,6 +19,7 @@ import GameController
 import Network
 import Phoros
 import PhorosInput
+import PhorosCore
 import PhorosMedia
 import PhorosNetwork
 import PhorosSession
@@ -51,7 +52,21 @@ let secret = SharedSecret(hex: "5e1f2a9c4d7b3e6a8f0c1d2e3b4a5968778695a4b3c2d1e0
 let maximumFrameRate = ProcessInfo.processInfo.environment["HARNESS_MAX_FPS"].flatMap(Double.init)
 // HARNESS_CODEC=hevc advertises HEVC first, as Beam does; default H.264.
 let videoCodecs: [VideoCodecID] = ProcessInfo.processInfo.environment["HARNESS_CODEC"] == "hevc" ? [.hevc, .h264] : [.h264]
-let capabilities = ClientCapabilities(deviceName: "Harness", deviceID: "harness-client", audioCodecs: [.pcmFloat32], videoCodecs: videoCodecs, wantsAudio: false, maximumFrameRate: maximumFrameRate)
+// HARNESS_AUDIO=1 asks for audio (PCM, so every chunk can be checked byte for byte).
+let audioMode = ProcessInfo.processInfo.environment["HARNESS_AUDIO"] ?? ""
+let wantsAudio = !audioMode.isEmpty
+// AAC first, as Beam does. HARNESS_AUDIO=pcm asks for PCM instead: byte-exact on the wire, but
+// only rtc2 carries it (the legacy wire caps a packet at 1400 B, a 10 ms PCM chunk is 3840 B).
+let audioCodecs: [AudioCodecID] = audioMode == "pcm" ? [.pcmFloat32] : [.aacLC, .pcmFloat32]
+let capabilities = ClientCapabilities(deviceName: "Harness", deviceID: "harness-client", audioCodecs: audioCodecs, videoCodecs: videoCodecs, wantsAudio: wantsAudio, maximumFrameRate: maximumFrameRate)
+var audioChunks = 0
+var otherPackets = 0
+/// CA: one audio chunk received (id = sequence, extra = pts_us, bytes, hash, age_us)
+func logAudio(_ header: AudioChunkHeader, _ body: Data) {
+    audioChunks += 1
+    let age = clock.age(ofPresentationTimestamp: header.presentationTimestamp, now: nowMicros()) ?? -1
+    log("CA", Int(header.sequenceNumber), extra: "\(header.presentationTimestamp),\(body.count),\(hash(body)),\(age)")
+}
 var clock = ClockSync()
 func nowMicros() -> Int64 { let t = CMClockGetTime(CMClockGetHostTimeClock()); return Int64(Double(t.value) * 1_000_000 / Double(t.timescale)) }
 let params = PhorosConnection.parameters()
@@ -108,6 +123,17 @@ func makeDecoder(_ description: CMVideoFormatDescription) {
     decoder = session
 }
 
+func hash(_ data: Data) -> UInt64 {
+    var h: UInt64 = 0xcbf29ce484222325
+    data.withUnsafeBytes { buf in for b in buf { h = (h ^ UInt64(b)) &* 0x100000001b3 } }
+    return h
+}
+
+/// CH: FNV-1a of the bitstream, in assembly order; the analyzer pairs host and client frames by it.
+func logHash(_ assembled: AssembledFrame) {
+    log("CH", Int(assembled.frameNumber), extra: "\(hash(assembled.bitstream)),\(assembled.isKeyframe ? 1 : 0)")
+}
+
 func decode(_ frame: AssembledFrame) {
     guard let formatDescription, let decoder,
           let sample = VideoFormat.makeSampleBuffer(annexB: frame.bitstream, formatDescription: formatDescription, presentationTime: CMTime(value: CMTimeValue(frame.presentationTimestamp), timescale: 1_000_000)) else { return }
@@ -132,19 +158,25 @@ link.onFrame = { frame in
                 if let assembled = assembler.receive(packet.payload, isKeyframe: packet.header.type == .videoKeyframe) {
                     framesReceived += 1
                     log("H7", Int(assembled.frameNumber), extra: "\(assembled.presentationTimestamp),\(assembled.bitstream.count)")
+                    logHash(assembled)
                     if let age = clock.age(ofPresentationTimestamp: assembled.presentationTimestamp, now: nowMicros()) {
                         log("A", Int(assembled.frameNumber), extra: "\(age)")   // frame age at assembly, host capture → here
                     }
                     decode(assembled)
                 }
             }
+        case .audio:
+            guard let header = AudioChunkHeader.parse(from: packet.payload) else { return }
+            logAudio(header, packet.payload.dropFirst(AudioChunkHeader.size))
         case .parameterSets:
             guard let codec = VideoCodecID(packetFlags: packet.header.flags),
                   let description = VideoFormat.makeDescription(parameterSets: packet.payload, codec: codec) else { return }
             decodeQueue.async { formatDescription = description; makeDecoder(description); stderr("parameter sets: \(codec.wireName)") }
         case .control:
             handleJSON(packet.payload)
-        default: break
+        default:
+            if otherPackets < 5 { stderr("packet type \(packet.header.type) flags \(packet.header.flags) \(packet.payload.count) B") }
+            otherPackets += 1
         }
     case .message(let json):
         handleJSON(json)
@@ -173,12 +205,51 @@ func handleJSON(_ data: Data) {
         return
     }
     if let control = try? JSONDecoder().decode(ControlMessage.self, from: data) {
+        if case .transportOffer(let offer) = control, offer.kind == "rtc2" { acceptRTC(offer) }
+        if case .transportFallback = control { rtcReady = false; rtcTransport?.cancel(); rtcTransport = nil; log("RTC", 8, extra: "host fell back") }
         if case .clockReply(let reply) = control, let rtt = clock.reply(reply, now: nowMicros()) {
             // C: one clock sample (id = rtt µs, extra = offset µs, best rtt µs)
             log("C", Int(rtt), extra: "\(clock.offset ?? 0),\(clock.bestRoundTrip ?? 0)")
         }
         if case .ping = control { sendControl(.pong) }
     }
+}
+
+// MARK: - rtc2 (BEAM-54): accept the host's UDP offer, take media and send input on it
+
+var rtcPeer: RealtimePeer?
+var rtcTransport: PhorosPeerTransport?
+var rtcReady = false
+func acceptRTC(_ offer: TransportOffer) {
+    let address = "127.0.0.1:7982"
+    guard let peer = RealtimePeer(isHost: false, localAddress: address) else { stderr("rtc2: peer creation failed"); return }
+    let media = PhorosPeerTransport(peer: peer, queue: decodeQueue)
+    media.onReady = { rtcReady = true; stderr("rtc2 connected"); log("RTC", 1) }
+    media.onKeyframeNeeded = { log("NC", 0) }   // a frame after an unrepaired gap: the core sent a PLI
+    media.onEnd = { _ in rtcReady = false; log("RTC", 9, extra: "ended") }
+    media.onInbound = { inbound in
+        switch inbound {
+        case .video(let assembled):
+            framesReceived += 1
+            log("H7", Int(assembled.frameNumber), extra: "\(assembled.presentationTimestamp),\(assembled.bitstream.count)")
+            logHash(assembled)
+            if let age = clock.age(ofPresentationTimestamp: assembled.presentationTimestamp, now: nowMicros()) { log("A", Int(assembled.frameNumber), extra: "\(age)") }
+            decode(assembled)
+        case .videoParameterSets(let sets, let codec):
+            guard let description = VideoFormat.makeDescription(parameterSets: sets, codec: codec) else { return }
+            formatDescription = description; makeDecoder(description); stderr("parameter sets (rtc2): \(codec.wireName)")
+        case .audio(let header, let body, _):
+            logAudio(header, body)
+        default: break
+        }
+    }
+    media.hostTimeReference = offer.hostMicros
+    rtcPeer = peer
+    rtcTransport = media
+    guard peer.runOwnSocket() == 0 else { stderr("rtc2: bind failed"); return }
+    peer.setRemote(info: offer.info, address: offer.address, nowMicros: 0)
+    sendControl(.transportAnswer(TransportOffer(kind: "rtc2", address: address, info: peer.localInfo)))
+    stderr("rtc2 answered \(offer.address)")
 }
 
 // MARK: - Controller (the harness pad, DualShock 4 identity, forwarded like Beam does)
@@ -190,10 +261,22 @@ func startController() {
     GCController.shouldMonitorBackgroundEvents = true
     sampler.accepts = { $0.productCategory.localizedCaseInsensitiveContains("dualshock") }
     sampler.onAttachmentChange = { attached in stderr("harness pad attached=\(attached)") }
+    var reportSequence: UInt16 = 0
     sampler.onReport = { report, connected in
+        var report = report
+        reportSequence &+= 1; report.sequence = reportSequence
+        log("RS", Int(reportSequence), extra: report.buttons.contains(.a) ? "down" : "up")
         let a = report.buttons.contains(.a)
         if a != lastA { lastA = a; inputTransitions += 1; log("H1", inputTransitions, extra: a ? "down" : "up") }
-        link.send(Packet.encode(.input, flags: connected ? ControllerReport.connectedFlag : 0, payload: report.serialized()))
+        if rtcReady, let rtcTransport { rtcTransport.sendInput(report, connected: connected) }
+        else {
+            let n = inputTransitions
+            let t0 = DispatchTime.now().uptimeNanoseconds
+            link.send(Packet.encode(.input, flags: connected ? ControllerReport.connectedFlag : 0, payload: report.serialized())) { _ in
+                // H1S: how long the TCP send took to be accepted by the kernel
+                if a != lastA || true { log("H1S", n, extra: "\((DispatchTime.now().uptimeNanoseconds - t0) / 1000)") }
+            }
+        }
     }
     sampler.start()
 }
