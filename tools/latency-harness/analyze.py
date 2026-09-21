@@ -26,6 +26,20 @@ h5e = {e[1]: e for e in by(b, "H5E")}                   # id = pts_us
 h6 = {int(e[3][0]): e for e in by(b, "H6")}             # keyed by pts_us, extra has frame number? no: id=frame, extra[0]=pts
 h6_by_frame = {e[1]: e for e in by(b, "H6")}
 h7 = {e[1]: e for e in by(c, "H7")}; h8 = {e[1]: e for e in by(c, "H8")}
+# Host and client number frames independently (the client counts what it assembles), so a
+# frame the host counted but never sent shifts every later pairing by one. When both sides
+# logged bitstream hashes (HH at the host keyed by PTS, CH at the client in assembly order),
+# map host frame -> hash -> client frame and re-key H7/H8 to host numbering.
+hh = {int(e[1]): e[3][0] for e in by(b, "HH")}            # pts_us -> hash
+ch = [e[3][0] for e in by(c, "CH")]                        # client frame index -> hash
+if hh and ch:
+    hash_to_client = {}
+    for i, h in enumerate(ch): hash_to_client.setdefault(h, i)
+    h6_pts_by_frame = {e[1]: int(e[3][0]) for e in by(b, "H6")}
+    host_to_client = {fr: hash_to_client[hh[pts]] for fr, pts in h6_pts_by_frame.items() if pts in hh and hh[pts] in hash_to_client}
+    client_to_host = {v: k for k, v in host_to_client.items()}
+    h7 = {client_to_host[f]: e for f, e in h7.items() if f in client_to_host}
+    h8 = {client_to_host[f]: e for f, e in h8.items() if f in client_to_host}
 # pts -> frame number via H6 (extra[0] = pts_us)
 pts_to_frame = {}
 for e in by(b, "H6"):

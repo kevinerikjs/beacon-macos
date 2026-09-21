@@ -15,7 +15,8 @@ HOST="${HARNESS_HOST:-$(route -n get default 2>/dev/null | awk '/interface:/{pri
 BUNDLE="com.beamapp.ios"
 echo "device=$DEVICE host=$HOST out=$OUT"
 pkill -x Beacon 2>/dev/null || true
-for i in $(seq 1 50); do lsof -nP -iTCP:7979 -sTCP:LISTEN >/dev/null 2>&1 || break; sleep 0.2; done   # the old listener must be gone
+for i in $(seq 1 50); do pgrep -x Beacon >/dev/null 2>&1 || break; sleep 0.2; done   # the old Beacon must be gone, not just its listener
+pkill -9 -x Beacon 2>/dev/null || true
 sleep 0.5
 # the phone pushes its log here when the run ends (HarnessRunner.uploadLog)
 pkill -f 'nc -l 7990' 2>/dev/null || true   # a listener left by an aborted run would swallow the push

@@ -472,6 +472,7 @@ final class StreamSession {
 
     func send(videoData: Data, pts: CMTime, isKeyframe: Bool) {
         guard isAuthenticated, !hold.isHeld else { return }
+        if Harness.isEnabled { Harness.log("HH", Int(pts.microseconds), extra: "\(Harness.hash(videoData)),\(isKeyframe ? 1 : 0)") }
         media.sendVideo(videoData, presentationTimestamp: pts.microseconds, isKeyframe: isKeyframe)
     }
 

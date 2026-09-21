@@ -102,6 +102,14 @@ enum Harness {
     static func nowNanos() -> UInt64 { mach_absolute_time() * UInt64(timebase.numer) / UInt64(timebase.denom) }
 
     /// One event line. `id` correlates a press across stages; frame stages use the frame number.
+    /// FNV-1a over a bitstream: the harness compares what the host sent with what the client
+    /// assembled, frame by frame.
+    static func hash(_ data: Data) -> UInt64 {
+        var h: UInt64 = 0xcbf29ce484222325
+        data.withUnsafeBytes { buf in for b in buf { h = (h ^ UInt64(b)) &* 0x100000001b3 } }
+        return h
+    }
+
     static func log(_ stage: String, _ id: Int, at nanos: UInt64 = nowNanos(), extra: String = "") {
         guard isEnabled else { return }
         let line = "\(stage),\(id),\(nanos)\(extra.isEmpty ? "" : "," + extra)\n"

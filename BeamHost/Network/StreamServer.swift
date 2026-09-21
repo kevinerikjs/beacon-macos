@@ -206,6 +206,7 @@ final class StreamServer {
     /// Coalesced: many drops in one burst produce one request.
     private var keyframeRecoveryPending = false
     func requestKeyframeForRecovery() {
+        if Harness.isEnabled { Harness.log("KFR", keyframeRecoveryPending ? 0 : 1) }   // 1 = honoured, 0 = throttled
         guard !keyframeRecoveryPending else { return }
         keyframeRecoveryPending = true
         videoEncoder.requestKeyframe()

@@ -193,11 +193,15 @@ func acceptRTC(_ offer: TransportOffer) {
     guard let peer = RealtimePeer(isHost: false, localAddress: address) else { stderr("rtc2: peer creation failed"); return }
     let media = PhorosPeerTransport(peer: peer, queue: decodeQueue)
     media.onReady = { rtcReady = true; stderr("rtc2 connected"); log("RTC", 1) }
+    media.onKeyframeNeeded = { log("NC", 0) }   // a frame after an unrepaired gap: the core sent a PLI
     media.onInbound = { inbound in
         switch inbound {
         case .video(let assembled):
             framesReceived += 1
             log("H7", Int(assembled.frameNumber), extra: "\(assembled.presentationTimestamp),\(assembled.bitstream.count)")
+            var h: UInt64 = 0xcbf29ce484222325
+            assembled.bitstream.withUnsafeBytes { buf in for b in buf { h = (h ^ UInt64(b)) &* 0x100000001b3 } }
+            log("CH", Int(assembled.presentationTimestamp), extra: "\(h),\(assembled.isKeyframe ? 1 : 0)")
             if let age = clock.age(ofPresentationTimestamp: assembled.presentationTimestamp, now: nowMicros()) { log("A", Int(assembled.frameNumber), extra: "\(age)") }
             decode(assembled)
         case .videoParameterSets(let sets, let codec):
