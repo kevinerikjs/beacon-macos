@@ -30,9 +30,18 @@ enum MediaKeyDispatcher {
             return
         }
 
-        if let controlID = payload.controlID,
-           let action = PhoneControlsStore.shared.action(forControlID: controlID) {
+        if let controlID = payload.controlID {
+            guard let action = PhoneControlsStore.shared.action(forControlID: controlID) else {
+                // A stale keyboard control must not fall through to the harmless
+                // placeholder media key carried by accessory events.
+                guard payload.specialKey == nil else { return }
+                InputReplay.perform(payload.key)
+                return
+            }
             perform(action, payload: payload)
+        } else if let rawKey = payload.specialKey {
+            guard let key = SpecialKey(rawValue: rawKey) else { return }
+            InputReplay.typeSpecialKey(key, modifiers: KeyModifiers(rawValue: payload.keystrokeModifiers ?? 0))
         } else {
             InputReplay.perform(payload.key)
         }
@@ -44,25 +53,37 @@ enum MediaKeyDispatcher {
             guard let text = payload.text, !text.isEmpty else { return }
             InputReplay.typeText(text, thenReturn: sendReturn)
         case .liveKeyboard:
-            guard let key = payload.keystroke, !key.isEmpty else { return }
-            InputReplay.typeKeystroke(key, modifiers: KeyModifiers(rawValue: payload.keystrokeModifiers ?? 0))
+            let modifiers = KeyModifiers(rawValue: payload.keystrokeModifiers ?? 0)
+            if let rawKey = payload.specialKey {
+                guard let key = SpecialKey(rawValue: rawKey) else { return }
+                InputReplay.typeSpecialKey(key, modifiers: modifiers)
+            } else if let key = payload.keystroke, !key.isEmpty {
+                InputReplay.typeKeystroke(key, modifiers: modifiers)
+            }
         case .modifier:
             // Armed on the phone; arrives here folded into a later keystroke.
             break
         case .click(let fixed):
+            // The phone names the button on every click, so it wins over the button's own
+            // side: a two-finger tap or a long-press on a Left Click button is a right click
+            // (BEAM-70). Phones that predate that send the button's own side anyway.
+            func isRight(_ button: String?) -> Bool {
+                if let button { return button == "right" }
+                return fixed == .right
+            }
+            if let pointer = payload.pointer {
+                perform(pointer, isRight: isRight(pointer.button))
+                return
+            }
             guard let click = payload.click else { return }
             guard let point = screenPointForTap?(CGPoint(x: click.x, y: click.y)) else {
                 logger.warning("Phone click dropped: nothing is being captured")
                 return
             }
-            let right: Bool
-            switch fixed {
-            case .left: right = false
-            case .right: right = true
-            case .choose: right = click.button == "right"
-            }
-            InputReplay.click(at: point, right: right)
-            logger.info("Phone click at (\(Int(point.x)), \(Int(point.y))) \(right ? "right" : "left")")
+            let right = isRight(click.button)
+            let count = click.count ?? 1
+            InputReplay.click(at: point, right: right, count: count)
+            logger.info("Phone click at (\(Int(point.x)), \(Int(point.y))) \(right ? "right" : "left") x\(count)")
         case .key(let keyCode, let modifiers):
             InputReplay.pressKey(code: keyCode, modifiers: KeyModifiers(rawValue: modifiers))
         case .mediaKey(let kind):
@@ -76,6 +97,27 @@ enum MediaKeyDispatcher {
         case .none:
             break
         }
+    }
+
+    /// A press, drag, release or scroll from the phone's click mode (BEAM-70).
+    private static func perform(_ pointer: PointerEvent, isRight: Bool) {
+        guard let phase = pointer.knownPhase else { return }
+        guard let point = screenPointForTap?(CGPoint(x: pointer.x, y: pointer.y)) else {
+            // Nothing captured: never leave a button held down.
+            if phase == .up { InputReplay.releasePointer() }
+            return
+        }
+        switch phase {
+        case .down: InputReplay.pointerDown(at: point, right: isRight)
+        case .move: InputReplay.pointerMove(to: point)
+        case .up: InputReplay.pointerUp(at: point)
+        case .scroll: InputReplay.scroll(at: point, dx: pointer.dx ?? 0, dy: pointer.dy ?? 0)
+        }
+    }
+
+    /// The phone went away: release anything a drag was holding.
+    static func releaseHeldInput() {
+        InputReplay.releasePointer()
     }
 
     /// Replays stored steps off the network queue so a long macro never holds up the session.
