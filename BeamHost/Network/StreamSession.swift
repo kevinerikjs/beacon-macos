@@ -136,6 +136,7 @@ final class StreamSession {
         heartbeatTimer?.cancel()
         heartbeatTimer = nil
         gamepad.release()
+        MediaKeyDispatcher.releaseHeldInput()
         rtcTransport?.cancel()
         transport.cancel()
         logger.info("Session \(self.id) disconnected")
@@ -267,7 +268,8 @@ final class StreamSession {
             supportsWindowSelection: true,
             controls: PhoneControlsStore.shared.wireControls(),
             supportsControllerInput: ControllerPassthrough.isEnabled,
-            supportsClockSync: true
+            supportsClockSync: true,
+            supportsPointer: true
         )
     }
 
