@@ -68,7 +68,9 @@ final class ScreenCapture: NSObject {
         } else {
             aspect = source.width / source.height
         }
-        let longEdge = CGFloat(max(pw, ph))
+        let requestedLongEdge = CGFloat(max(pw, ph))
+        let nativeLongEdge = currentDisplay.map { CGFloat(max($0.width, $0.height)) } ?? requestedLongEdge
+        let longEdge = min(requestedLongEdge, nativeLongEdge)
         var w: CGFloat, h: CGFloat
         if aspect >= 1 {
             w = longEdge; h = longEdge / aspect

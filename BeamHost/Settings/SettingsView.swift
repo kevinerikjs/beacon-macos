@@ -1339,7 +1339,7 @@ struct DisplaySettingsTab: View {
                         get: { appState.qualityManager.preferredPreset },
                         set: { appState.qualityManager.preferredPreset = $0 }
                     )) {
-                        ForEach(QualityPreset.allCases) { preset in
+                        ForEach(availableQualityPresets) { preset in
                             Text(preset.displayName).tag(preset)
                         }
                     }
@@ -1356,9 +1356,19 @@ struct DisplaySettingsTab: View {
                         .padding(.bottom, 8)
                 } else {
                     let p = appState.qualityManager.preferredPreset
-                    Text("\(p.width)×\(p.height) · \(Int(p.frameRate)) fps · \(String(format: "%.1f", p.bitrateMbps)) Mbps")
+                    Text(isNativePreset(p)
+                         ? "Up to display native resolution · \(Int(p.frameRate)) fps · \(String(format: "%.1f", p.bitrateMbps)) Mbps"
+                         : "\(p.width)×\(p.height) · \(Int(p.frameRate)) fps · \(String(format: "%.1f", p.bitrateMbps)) Mbps")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 8)
+                }
+                if max(presetDimension(appState.qualityManager.preferredPreset), 0) > 1920 {
+                    Label("Higher resolution uses more bandwidth and processing, which may increase latency. Auto stays at 1080p max.", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 12)
                         .padding(.bottom, 8)
@@ -1372,6 +1382,25 @@ struct DisplaySettingsTab: View {
 
     private func displayName(for display: SCDisplay, index: Int) -> String {
         "Display \(index + 1)\(index == 0 ? " (Main)" : "")"
+    }
+
+    private var availableQualityPresets: [QualityPreset] {
+        let nativeEdge = appState.selectedDisplay.map { max($0.width, $0.height) } ?? 1920
+        return QualityPreset.allCases.filter { preset in
+            switch preset {
+            case .auto: return true
+            case .native_30, .native_60: return nativeEdge > 2560
+            default: return max(preset.width, preset.height) <= nativeEdge
+            }
+        }
+    }
+
+    private func isNativePreset(_ preset: QualityPreset) -> Bool {
+        preset == .native_30 || preset == .native_60
+    }
+
+    private func presetDimension(_ preset: QualityPreset) -> Int {
+        isNativePreset(preset) ? Int.max : max(preset.width, preset.height)
     }
 }
 

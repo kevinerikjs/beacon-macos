@@ -17,6 +17,12 @@ extension QualityPreset {
         case .p720_60: return "720p · 60 fps"
         case .p1080_30: return "1080p · 30 fps"
         case .p1080_60: return "1080p · 60 fps"
+        case .p1440_30: return "1440p · 30 fps"
+        case .p1440_60: return "1440p · 60 fps"
+        case .p2160_30: return "4K · 30 fps"
+        case .p2160_60: return "4K · 60 fps"
+        case .native_30: return "Native · 30 fps"
+        case .native_60: return "Native · 60 fps"
         }
     }
 
@@ -30,6 +36,12 @@ extension QualityPreset {
         case .p720_60: return 6
         case .p1080_30: return 6
         case .p1080_60: return 10
+        case .p1440_30: return 16
+        case .p1440_60: return 24
+        case .p2160_30: return 28
+        case .p2160_60: return 42
+        case .native_30: return 40
+        case .native_60: return 60
         }
     }
 
@@ -51,7 +63,7 @@ extension AudioCodecID {
         switch preset {
         case .p360_30: stereoRate = 64_000
         case .p480_30: stereoRate = 96_000
-        case .p720_30, .p720_60, .p1080_30, .p1080_60, .auto: stereoRate = 128_000
+        case .p720_30, .p720_60, .p1080_30, .p1080_60, .p1440_30, .p1440_60, .p2160_30, .p2160_60, .native_30, .native_60, .auto: stereoRate = 128_000
         }
         return channels <= 1 ? stereoRate / 2 : min(stereoRate, 160_000)
     }

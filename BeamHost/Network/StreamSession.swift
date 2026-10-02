@@ -269,7 +269,8 @@ final class StreamSession {
             controls: PhoneControlsStore.shared.wireControls(),
             supportsControllerInput: ControllerPassthrough.isEnabled,
             supportsClockSync: true,
-            supportsPointer: true
+            supportsPointer: true,
+            maximumVideoDimension: AppState.shared?.selectedDisplay.map { max($0.width, $0.height) }
         )
     }
 

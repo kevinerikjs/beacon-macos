@@ -390,8 +390,8 @@
 				);
 				LE_TEXT_BASE_ADDRESS = 0;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				CURRENT_PROJECT_VERSION = 27;
-				MARKETING_VERSION = 1.7.0;
+				CURRENT_PROJECT_VERSION = 29;
+				MARKETING_VERSION = 1.8.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.beam.beacon;
 				PRODUCT_NAME = Beacon;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -443,8 +443,8 @@
 				);
 				LE_TEXT_BASE_ADDRESS = 0;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				CURRENT_PROJECT_VERSION = 27;
-				MARKETING_VERSION = 1.7.0;
+				CURRENT_PROJECT_VERSION = 29;
+				MARKETING_VERSION = 1.8.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.beam.beacon;
 				PRODUCT_NAME = Beacon;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -517,7 +517,7 @@
 			repositoryURL = "https://github.com/kevinerikjs/phoros.git";
 			requirement = {
 				kind = exactVersion;
-				version = "1.5.0";
+				version = "1.6.0";
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
