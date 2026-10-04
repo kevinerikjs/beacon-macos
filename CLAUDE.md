@@ -120,7 +120,12 @@ codesign --force --sign "$CERT" --timestamp --options runtime "$SPK/Updater.app"
 codesign --force --sign "$CERT" --timestamp --options runtime "$SPK/Autoupdate"
 codesign --force --sign "$CERT" --timestamp --options runtime "$SPK/Sparkle"
 codesign --force --sign "$CERT" --timestamp --options runtime "$APP/Contents/Frameworks/Sparkle.framework"
-codesign --force --deep --sign "$CERT" --timestamp --options runtime "$APP"
+# Re-sign the app itself WITH its entitlements and WITHOUT --deep. A bare `--force --deep` re-sign
+# drops every entitlement, including hid.virtual.device: Beacon 1.8.0 shipped that way and
+# controller passthrough silently stopped working (fixed in 1.9.0).
+codesign -d --entitlements - --xml "$APP" > /tmp/beacon-ent.plist   # BEFORE any re-sign of $APP
+codesign --force --sign "$CERT" --timestamp --options runtime --entitlements /tmp/beacon-ent.plist "$APP"
+codesign -d --entitlements - "$APP" | grep -q hid.virtual.device || echo "ENTITLEMENT MISSING, do not ship"
 ```
 
 **2. Build volume icon (if beam.icon/Assets/full-icon.png changed)**
