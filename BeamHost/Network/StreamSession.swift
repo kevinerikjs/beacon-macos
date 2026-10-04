@@ -67,6 +67,11 @@ final class StreamSession {
     init(connection: NWConnection, server: StreamServer) {
         transport = PhorosLegacyTransport(
             accepting: connection,
+            // BEAM-104: a Beam that opens with secure_hello gets a sealed connection. One
+            // from before Beam 3.6 speaks plaintext and is served unless the person turned
+            // that off; handleAuthRequest also refuses plaintext from any device that has
+            // used encryption before.
+            security: .host(storedSecret: Self.storedSecret(for:), allowsPlaintext: EncryptionPolicy.allowsUnencryptedClients),
             options: LegacyTransportOptions(role: .host, keepAwakeInterval: Harness.experiment["nokeep"] == nil ? 0.02 : 0,
                                             readsLinkBacklog: Harness.experiment["nokq"] == nil),
             queue: stateQueue
@@ -123,6 +128,7 @@ final class StreamSession {
             case .transportFailed(let error): logger.error("Session TCP failed: \(error)")
             case .protocolViolation(let violation): logger.error("Session \(self.id) protocol violation: \(String(describing: violation))")
             case .closedByPeer: logger.info("Session \(self.id) peer closed connection")
+            case .secureChannelFailed(let error): logger.warning("Session \(self.id) encrypted handshake ended: \(String(describing: error), privacy: .public)")
             case .cancelled, .none: break
             }
             self.server?.sessionDisconnected(self)
@@ -222,12 +228,16 @@ final class StreamSession {
         // The force-PCM default is Beacon's escape hatch for a bad AAC release.
         let forcePCM = UserDefaults.standard.bool(forKey: AudioCodecID.forcePCMDefaultsKey)
         let pairedDevices = KeyStore.shared.loadPairedDevices()
+        let encrypted = transport.link.isEncrypted
+        if let reason = EncryptionPolicy.refusal(for: message.deviceID, encrypted: encrypted,
+                                                 keyedTo: transport.link.secureDeviceID, devices: pairedDevices) {
+            logger.warning("Refusing auth for \(message.deviceID ?? "?", privacy: .public): \(reason, privacy: .public)")
+            sendPairingResponse(PairingMessage(type: .authFailed, error: reason))
+            return
+        }
         let outcome = HostAuthenticator.authenticate(
             message,
-            storedSecret: { deviceID in
-                if Harness.isEnabled, deviceID == Harness.deviceID { return SharedSecret(hex: Harness.secretHex) }
-                return pairedDevices.first { $0.id == deviceID }.flatMap { SharedSecret(bytes: $0.sharedSecret) }
-            },
+            storedSecret: Self.storedSecret(for:),
             // Re-advertise our tailnet address on every auth, not just at pairing: this is
             // how the phone's stored remote address self-heals if our Tailscale IP ever
             // changes (BEAM-19).
@@ -248,13 +258,23 @@ final class StreamSession {
             transport.setStreaming(true)
             authenticatedDeviceID = session.deviceID
             sendPairingResponse(session.reply)
+            if encrypted { EncryptionPolicy.markEncrypted(deviceID: session.deviceID) }
 
             let deviceName = pairedDevices.first { $0.id == session.deviceID }?.name ?? session.deviceID
             server?.sessionAuthenticated(self, deviceName: deviceName)
             if Self.offersRTC { offerRTC() }
-            logger.info("Session authenticated for device '\(deviceName)' — audio \(self.wantsAudio ? self.negotiatedAudioCodec.wireName : "off"), video \(self.negotiatedVideoCodec.wireName)")
+            logger.info("Session authenticated for device '\(deviceName)' (\(encrypted ? "encrypted" : "plaintext", privacy: .public)) — audio \(self.wantsAudio ? self.negotiatedAudioCodec.wireName : "off"), video \(self.negotiatedVideoCodec.wireName)")
         }
     }
+
+    /// The pairing secret for a device, for the encrypted handshake and for auth_request.
+    @Sendable static func storedSecret(for deviceID: String) -> SharedSecret? {
+        if Harness.isEnabled, deviceID == Harness.deviceID { return SharedSecret(hex: Harness.secretHex) }
+        return KeyStore.shared.loadPairedDevices().first { $0.id == deviceID }.flatMap { SharedSecret(bytes: $0.sharedSecret) }
+    }
+
+    /// Whether this session's connection is sealed (BEAM-104).
+    var isEncrypted: Bool { transport.link.isEncrypted }
 
     /// Everything this Beacon advertises about itself. Shared with PairingManager so
     /// pair_success and auth_success never disagree.
@@ -270,7 +290,8 @@ final class StreamSession {
             supportsControllerInput: ControllerPassthrough.isEnabled,
             supportsClockSync: true,
             supportsPointer: true,
-            maximumVideoDimension: AppState.shared?.selectedDisplay.map { max($0.width, $0.height) }
+            maximumVideoDimension: AppState.shared?.selectedDisplay.map { max($0.width, $0.height) },
+            supportsEncryption: true
         )
     }
 
@@ -542,5 +563,41 @@ final class StreamSession {
         // HA: one audio chunk handed to the transport (id = pts µs, extra = bytes, hash)
         Harness.log("HA", Int(pts.microseconds), extra: "\(audioData.count),\(Harness.hash(audioData))")
         media.sendAudio(audioData, codec: codec, presentationTimestamp: pts.microseconds)
+    }
+}
+
+// MARK: - Encryption policy (BEAM-104)
+
+/// Who may connect without encryption. Beam 3.6 and later always encrypt with a Beacon
+/// that advertises it. Older Beam builds can't, so they are served in plaintext while
+/// `allowsUnencryptedClients` is on. A device that has connected with encryption once is
+/// never accepted in plaintext again: an attacker cannot downgrade it by posing as an old build.
+enum EncryptionPolicy {
+    static let allowsUnencryptedKey = "BeaconAllowsUnencryptedClients"
+
+    static var allowsUnencryptedClients: Bool {
+        UserDefaults.standard.object(forKey: allowsUnencryptedKey) as? Bool ?? true
+    }
+
+    /// Why an auth_request must be refused, or nil to go on to the secret check.
+    static func refusal(for deviceID: String?, encrypted: Bool, keyedTo secureDeviceID: String?, devices: [PairedDevice]) -> String? {
+        if encrypted {
+            // Keys derived from one device's secret don't vouch for another device.
+            if let secureDeviceID, secureDeviceID != deviceID { return "Authentication failed" }
+            return nil
+        }
+        guard let deviceID, let device = devices.first(where: { $0.id == deviceID }) else { return nil }
+        if device.usesEncryption == true {
+            return "This iPhone connected with encryption before, so Beacon won't accept an unencrypted connection from it. Update Beam."
+        }
+        return nil
+    }
+
+    static func markEncrypted(deviceID: String) {
+        var devices = KeyStore.shared.loadPairedDevices()
+        guard let index = devices.firstIndex(where: { $0.id == deviceID }), devices[index].usesEncryption != true else { return }
+        devices[index].usesEncryption = true
+        KeyStore.shared.savePairedDevices(devices)
+        Task { @MainActor in AppState.shared?.pairedDevices = devices }
     }
 }

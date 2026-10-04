@@ -224,6 +224,9 @@ struct PairedDevice: Codable, Identifiable {
     let name: String      // e.g. "Kevin's iPhone"
     let sharedSecret: Data
     var lastSeen: Date
+    /// Has connected over an encrypted connection (BEAM-104). From then on Beacon
+    /// refuses a plaintext connection from it. Absent in records from before Beacon 1.9.
+    var usesEncryption: Bool? = nil
 }
 
 

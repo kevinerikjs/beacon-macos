@@ -148,7 +148,9 @@ final class StreamServer {
 
             // Advertise via Bonjour on the same listener — avoids the two-listener port conflict.
             let deviceName = Host.current().localizedName ?? "Beacon"
-            listener?.service = NWListener.Service(name: deviceName, type: kBeamServiceType, domain: "local.")
+            // "enc=1" tells Beam 3.6+ to open with secure_hello (BEAM-104). Older Beam ignores TXT.
+            listener?.service = NWListener.Service(name: deviceName, type: kBeamServiceType, domain: "local.",
+                                                   txtRecord: NWTXTRecord(["enc": "1"]).data)
             listener?.serviceRegistrationUpdateHandler = { change in
                 switch change {
                 case .add(let endpoint):

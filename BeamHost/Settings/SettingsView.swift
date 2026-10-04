@@ -1484,6 +1484,7 @@ private struct DefaultWindowPicker: View {
 struct PairedDevicesTab: View {
     @Environment(AppState.self) private var appState
     @State private var selectedDeviceID: String? = nil
+    @State private var allowsUnencrypted = EncryptionPolicy.allowsUnencryptedClients
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -1506,6 +1507,18 @@ struct PairedDevicesTab: View {
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
+                            Spacer()
+                            if device.usesEncryption == true {
+                                Label("Encrypted", systemImage: "lock.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .help("This device's connection to Beacon is encrypted.")
+                            } else {
+                                Label("Not encrypted", systemImage: "lock.open")
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
+                                    .help("This device hasn't connected with encryption yet. Update Beam on it to version 3.6 or later.")
+                            }
                         }
                         .tag(device.id)
                     }
@@ -1524,6 +1537,16 @@ struct PairedDevicesTab: View {
                     .buttonStyle(.bordered)
                 }
             }
+
+            Toggle("Allow older Beam versions without encryption", isOn: $allowsUnencrypted)
+                .onChange(of: allowsUnencrypted) { _, value in
+                    UserDefaults.standard.set(value, forKey: EncryptionPolicy.allowsUnencryptedKey)
+                }
+            Text("Beam 3.6 and later always encrypt the connection. Older versions can't. Turn this off once every "
+                 + "iPhone and iPad you use is up to date. Devices that have connected with encryption are never "
+                 + "accepted without it.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
             remoteAccessSection
         }
