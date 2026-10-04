@@ -73,7 +73,7 @@ Guides: [why AirPlay can't do this](https://beamscreen.app/guide/airplay-mac-to-
 | **Capture** | [ScreenCaptureKit](https://developer.apple.com/documentation/screencapturekit), for both the picture and system audio |
 | **Encode** | VideoToolbox hardware encoding, HEVC or H.264. Audio as AAC-LC, or Float32 PCM for older Beam versions |
 | **Discovery** | Bonjour, advertising `_beam._tcp` |
-| **Control connection** | Network.framework TCP: pairing, sign-in with the paired secret, settings, phone input |
+| **Control connection** | Network.framework TCP, encrypted with keys from the pairing secret (Phoros: X25519 and AES-256-GCM): pairing, sign-in, settings, phone input |
 | **Media** | A UDP peer transport (ICE, DTLS, SRTP) from [Phoros](https://github.com/kevinerikjs/phoros), with loss repair and forward error correction. If it fails mid-stream, Beacon moves the stream to the TCP connection by itself |
 | **Pairing** | Beam asks to pair, Beacon shows a 6-digit code, you type it on the phone. The secret is kept in the macOS Keychain |
 | **Input** | Clicks, keys and text are replayed with `PhorosInput`, which needs Accessibility permission |
@@ -84,11 +84,10 @@ Your screen never goes to a server. Beacon has no analytics, no account system, 
 make two kinds of outside requests: Sparkle checks `beamscreen.app/appcast.xml` for updates, and the
 feedback form in Preferences sends what you write to `beamscreen.app/api/feedback`.
 
-**About encryption.** Video and audio on the default UDP transport are encrypted with DTLS and SRTP. The
-TCP control connection is not encrypted today, so on a shared network others on that network can read it.
-That includes the pairing secret, phone input such as typed text, and the stream itself after a fallback
-to TCP. Over Tailscale, WireGuard encrypts everything. Encrypting the control connection is planned. See
-[SECURITY.md](./SECURITY.md).
+**Encryption.** Everything Beacon and Beam send each other is encrypted end to end, using the secret your
+two devices agree on when you pair: the picture, the sound, and every click and key press. Since Beacon 1.9
+and Beam 3.6. Older Beam versions still connect without encryption until you turn that off in Preferences,
+Paired Devices. See [SECURITY.md](./SECURITY.md).
 
 ## Dependencies
 
