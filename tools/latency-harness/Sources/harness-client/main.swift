@@ -71,7 +71,10 @@ var clock = ClockSync()
 func nowMicros() -> Int64 { let t = CMClockGetTime(CMClockGetHostTimeClock()); return Int64(Double(t.value) * 1_000_000 / Double(t.timescale)) }
 let params = PhorosConnection.parameters()
 let port = NWEndpoint.Port(rawValue: UInt16(ProcessInfo.processInfo.environment["HARNESS_PORT"] ?? "7979") ?? 7979)!
-let link = PhorosConnection(to: NWEndpoint.hostPort(host: "127.0.0.1", port: port), parameters: params)
+// HARNESS_ENCRYPT=1: the encrypted connection Beam 3.6 opens to a Beacon that advertises it (BEAM-104).
+let encrypt = ProcessInfo.processInfo.environment["HARNESS_ENCRYPT"] == "1"
+let link = PhorosConnection(to: NWEndpoint.hostPort(host: "127.0.0.1", port: port), parameters: params,
+                            security: encrypt ? .client(.authenticate(deviceID: "harness-client", secret: secret)) : .none)
 
 var authenticated = false
 var assembler = FrameAssembler()
@@ -142,7 +145,7 @@ func decode(_ frame: AssembledFrame) {
 }
 
 link.onReady = {
-    stderr("connected; authenticating")
+    stderr("connected (\(link.isEncrypted ? "encrypted" : "plaintext")); authenticating")
     let auth = capabilities.authRequest(secret: secret)
     link.send(try! JSONEncoder().encode(auth))
 }

@@ -115,7 +115,7 @@ private struct PermissionsStepView: View {
                 PermissionRow(
                     icon: "keyboard",
                     title: "Media Key Control",
-                    subtitle: "Lets your iPhone control Mac playback: pause, skip, and seek.",
+                    subtitle: "Lets your iPhone or iPad click, scroll, type, and press keys on your Mac, and control playback.",
                     badge: "Optional",
                     isGranted: appState.hasAccessibilityPermission,
                     isLoading: false

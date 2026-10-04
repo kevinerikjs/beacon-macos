@@ -79,8 +79,10 @@ final class PairingManager {
             logger.warning("Pairing code mismatch for '\(deviceName)'")
             session.sendPairingResponse(reply)
         case .paired(let secret, let reply):
+            // Paired over an encrypted connection: plaintext from this device is refused from now on.
             KeyStore.shared.addPairedDevice(PairedDevice(
-                id: deviceID, name: deviceName, sharedSecret: secret.bytes, lastSeen: Date()
+                id: deviceID, name: deviceName, sharedSecret: secret.bytes, lastSeen: Date(),
+                usesEncryption: session.isEncrypted ? true : nil
             ))
             Task { @MainActor in
                 AppState.shared?.pairedDevices = KeyStore.shared.loadPairedDevices()
