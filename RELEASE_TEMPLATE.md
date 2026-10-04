@@ -1,7 +1,7 @@
 # Beacon Release Template
 
 Use this for every new Beacon (macOS host app) release.
-Canonical runbook is in `beam-macos/CLAUDE.md` → "Release Deployment (Public DMG Repo)".
+The full runbook is in `CLAUDE.md`, under "Release Deployment (Public DMG Repo)". When the two disagree, CLAUDE.md wins.
 
 ---
 
@@ -10,12 +10,12 @@ Canonical runbook is in `beam-macos/CLAUDE.md` → "Release Deployment (Public D
 ```
 major.minor.patch   build number (always increments by 1)
 
-major — breaking protocol change or complete redesign
-minor — new user-facing features
-patch — bug fixes / polish only
+major: breaking protocol change or a full redesign
+minor: new features people will notice
+patch: bug fixes and polish only
 ```
 
-Current: v1.1.3 (build 14). Next patch → v1.1.4 (build 15).
+Current: v1.8.0 (build 29). Next patch: v1.8.1 (build 30).
 
 ---
 
@@ -24,19 +24,21 @@ Current: v1.1.3 (build 14). Next patch → v1.1.4 (build 15).
 - [ ] All commits pushed to `beam-macos` main
 - [ ] Version bumped: `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` in project.pbxproj
 - [ ] Version bump committed and pushed
-- [ ] Test build on real device (or at minimum Debug build succeeds)
+- [ ] Tested on a real Mac with a real iPhone or iPad running Beam
 
 ---
 
 ## Build & Publish Steps
 
 ```bash
-# 1. Archive (hardened runtime, Developer ID signed)
+# 1. Archive (hardened runtime, Developer ID signed). The provisioning profile carries the
+#    HID virtual device entitlement for controller passthrough; without it Gatekeeper kills the app.
 xcodebuild archive \
   -project BeamHost.xcodeproj -scheme BeamHost -configuration Release \
   -archivePath /tmp/Beacon.xcarchive \
   CODE_SIGN_IDENTITY="Developer ID Application: KEVIN ERIK IIN (R4KDRC8S4D)" \
   CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM=R4KDRC8S4D \
+  PROVISIONING_PROFILE_SPECIFIER="Beacon Developer ID" \
   ENABLE_HARDENED_RUNTIME=YES CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO \
   "OTHER_CODE_SIGN_FLAGS=--timestamp"
 
@@ -92,7 +94,7 @@ SIGN=$(find ~/Library/Developer/Xcode/DerivedData/BeamHost-*/SourcePackages/arti
 
 ## GitHub Release Notes Template
 
-Pattern from past releases — keep it short, plain English bullet points:
+Keep it short: plain English, one idea per bullet.
 
 **Patch (bug fix):**
 ```
@@ -120,15 +122,15 @@ Add a new `<item>` block at the TOP of the `<channel>` (above the previous lates
 
 ```xml
 <item>
-  <title>Beacon X.Y.Z</title>
+  <title>Beacon vX.Y.Z</title>
   <pubDate>Day, DD Mon YYYY 00:00:00 +0000</pubDate>
   <sparkle:version>N</sparkle:version>              <!-- integer build number, always +1 -->
   <sparkle:shortVersionString>X.Y.Z</sparkle:shortVersionString>
   <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
   <description><![CDATA[
     <ul>
-      <li>Fixed/Added: short user-facing description</li>
-      <li>Fixed/Added: ...</li>
+      <li><b>Headline.</b> What changed, in a sentence or two.</li>
+      <li><b>Fix:</b> what was wrong, now fixed.</li>
     </ul>
   ]]></description>
   <enclosure
@@ -139,19 +141,20 @@ Add a new `<item>` block at the TOP of the `<channel>` (above the previous lates
 </item>
 ```
 
-Then commit and push `beam-web` — Vercel deploys automatically. Existing users will see the update prompt on next launch.
+Then commit and push `beam-web` and deploy the site, so `https://beamscreen.app/appcast.xml` serves the new item. Check it with `curl -s https://beamscreen.app/appcast.xml | head`. Existing users see the update on their next launch or when they choose Check for Updates.
 
 ---
 
 ## Appcast Description Style
 
-Match the existing tone — short, user-focused:
-- Start with "Fixed:" or "Added:" (no emoji)
-- One idea per `<li>`
-- No internal jargon (no "SCKit", "destinationRect", etc.)
-- Max 3-4 bullets for a patch, more ok for a minor release
+Match the recent releases in `beam-web/public/appcast.xml`:
+- Lead each bullet with a short bold headline, then one or two plain sentences about what changed for
+  the person using it. Use "Fix:" for fixes.
+- Say which Beam version a feature needs, if it needs one.
+- No internal names (no "SCKit", "rtc2", "destinationRect", ticket numbers).
+- Three or four bullets for a patch is plenty.
 
 **Examples from past releases:**
-- `Fixed: app failed to launch when installed from DMG`
-- `Auto-updates: Beacon now checks for updates on launch`
-- `Fixed viewport lock in specific-window mode — locked region was offset and scaled incorrectly`
+- `<b>Higher-resolution streaming.</b> Beacon now supports Beam's 1440p, 4K, and display-native quality options, and tells Beam the selected display's maximum resolution.`
+- `<b>Picture in Picture from the phone.</b> A Picture in Picture window (Chrome, Safari, QuickTime) now shows up in Beam's window list, so you can lock the stream to just the video.`
+- `<b>Fix:</b> after a ⌘ shortcut from the phone, ⌘ no longer stays held for the next keys you type.`
