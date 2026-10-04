@@ -30,6 +30,17 @@ paired devices. The areas most worth looking at:
 Reports that an attacker already on your Mac with your privileges can read your data are not
 vulnerabilities. That is what having your password means.
 
+## How the connection is encrypted
+
+Since Beacon 1.9 and Beam 3.6, the connection is encrypted with keys derived from the pairing secret and a
+fresh X25519 exchange, then sealed with AES-256-GCM. The UDP media transport's DTLS fingerprint travels
+inside that connection, so its DTLS-SRTP is tied to the pairing too. A device that has connected encrypted
+once is never accepted in plaintext again. The design and its limits are in
+[Phoros SECURITY.md](https://github.com/kevinerikjs/phoros/blob/main/SECURITY.md). Two limits you don't
+need to report: Beam versions before 3.6 connect in plaintext while "Allow older Beam versions without
+encryption" is on, and pairing itself has no secret to start from, so someone actively intercepting the
+connection during the pairing minute could still read the secret. Anything beyond that is very welcome.
+
 ## Out of scope
 
 - Findings from automated scanners with no demonstrated exploit path
