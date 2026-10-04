@@ -30,6 +30,16 @@ paired devices. The areas most worth looking at:
 Reports that an attacker already on your Mac with your privileges can read your data are not
 vulnerabilities. That is what having your password means.
 
+## Known limitation: the control connection is not encrypted
+
+You don't need to report this one. The TCP connection between Beacon and Beam has no transport encryption
+yet. On a shared network, someone else on that network can read the pairing secret, input from the phone
+(including typed text), and the video and audio whenever a stream has fallen back to TCP. On the default
+UDP transport, video and audio are encrypted with DTLS and SRTP, but the keys for it are agreed over the
+same unencrypted connection. Over Tailscale, WireGuard encrypts all of it. Encrypting the control
+connection is planned work. Reports that go further than this, for example a way in that doesn't need
+someone on the same network, are very welcome.
+
 ## Out of scope
 
 - Findings from automated scanners with no demonstrated exploit path
