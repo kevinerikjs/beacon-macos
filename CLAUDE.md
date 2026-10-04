@@ -210,3 +210,7 @@ Stable URL: `https://github.com/kevinerikjs/beacon-macos/releases/latest/downloa
 Files that reference this constant (keep aligned):
 - `beam-web/src/components/Hero.tsx` — `MACOS_DOWNLOAD_URL`
 - `beam-web/src/components/Download.tsx` — `MACOS_DOWNLOAD_URL`
+
+## Website answer bot (BEAM-112)
+
+beamscreen.app's "Ask anything" box answers visitors from `beam-web/knowledge/SOURCE-OF-TRUTH.md` (in this workspace: `/Volumes/yuh/business/beam/beam-web/knowledge/SOURCE-OF-TRUTH.md`). **Any change here that users will see updates that file in the same piece of work**: features added or removed, new versions, limits, prices, privacy or security behaviour. Mark built-but-unreleased things `[PENDING]` and clear the mark when the release ships. The file is read live, so no site rebuild is needed.
